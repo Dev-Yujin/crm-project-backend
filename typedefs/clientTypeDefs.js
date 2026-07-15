@@ -6,7 +6,7 @@ const clientTypeDefs = `#graphql
     email: String!
     whatsappNumber: String
     clientNotes: String
-    servicesAvailed: [String!]
+    servicesAvailed: [ID!]
     createdAt: String
   }
 
@@ -28,7 +28,7 @@ const clientTypeDefs = `#graphql
       email: String!
       whatsappNumber: String
       clientNotes: String
-      servicesAvailed: [String!]
+      servicesAvailed: [ID!]
     ): Client!
     deleteClient(clientId: ID!): Client!
     editClient(
@@ -38,7 +38,7 @@ const clientTypeDefs = `#graphql
       email: String
       whatsappNumber: String
       clientNotes: String
-      servicesAvailed: [String!]
+      servicesAvailed: [ID!]
     ): Client!
     clientInquiry(clientName: String!, email: String!, message: String!): Inquiry!
   }

@@ -1,6 +1,7 @@
 import { getDatabase, ref, push, set, get, remove, serverTimestamp } from "firebase/database";
 import { app } from "../config/firebase.js";
 import { pool } from "../config/supabase.js";
+import { validateServicesExist } from "./services.js";
 
 //Fetch All Clients
 export const getAllClients = async () => {
@@ -17,6 +18,8 @@ export const getAllClients = async () => {
 //Add a new client
 export const addClient = async (clientName, businessName, email, whatsappNumber = null, clientNotes = null, servicesAvailed = null) => {
     try {
+        await validateServicesExist(servicesAvailed);
+
         const clientsRef = ref(getDatabase(app), "clients");
         const newClientRef = push(clientsRef);
         await set(newClientRef, {
@@ -62,6 +65,10 @@ export const editClient = async (clientId, { clientName, businessName, email, wh
 
         if (!clientSnapshot.exists()) {
             throw new Error("Client not found");
+        }
+
+        if (servicesAvailed !== undefined) {
+            await validateServicesExist(servicesAvailed);
         }
 
         const updatedData = {};
