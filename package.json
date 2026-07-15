@@ -17,6 +17,7 @@
     "@supabase/supabase-js": "^2.110.5",
     "bcrypt": "^6.0.0",
     "dotenv": "^17.4.2",
+    "firebase": "^12.16.0",
     "graphql": "^16.14.2",
     "nodemon": "^3.1.14",
     "pg": "^8.22.0"
