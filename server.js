@@ -8,12 +8,18 @@ import jobTypeDefs from './typedefs/jobTypeDefs.js';
 import jobResolvers from './resolvers/jobResolvers.js';
 import clientTypeDefs from './typedefs/clientTypeDefs.js';
 import clientResolvers from './resolvers/clientResolvers.js';
+import taskTypeDefs from './typedefs/taskTypeDefs.js';
+import taskResolvers from './resolvers/taskResolvers.js';
+import departmentTypeDefs from './typedefs/departmentTypeDefs.js';
+import departmentResolvers from './resolvers/departmentResolvers.js';
+import serviceTypeDefs from './typedefs/serviceTypeDefs.js';
+import serviceResolvers from './resolvers/serviceResolvers.js';
 import { fetchCurrentUser } from './models/userFunctions.js';
 
 
 const server = new ApolloServer({
-  typeDefs:[userTypeDefs, memberTypeDefs, jobTypeDefs, clientTypeDefs],
-  resolvers:[userResolvers, memberResolvers, jobResolvers, clientResolvers],
+  typeDefs:[userTypeDefs, memberTypeDefs, jobTypeDefs, clientTypeDefs, taskTypeDefs, departmentTypeDefs, serviceTypeDefs],
+  resolvers:[userResolvers, memberResolvers, jobResolvers, clientResolvers, taskResolvers, departmentResolvers, serviceResolvers],
 });
 
 const { url } = await startStandaloneServer(server, {
