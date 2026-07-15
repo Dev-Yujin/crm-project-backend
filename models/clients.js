@@ -1,0 +1,100 @@
+import { getDatabase, ref, push, set, get, remove, serverTimestamp } from "firebase/database";
+import { app } from "../config/firebase.js";
+import { pool } from "../config/supabase.js";
+
+//Fetch All Clients
+export const getAllClients = async () => {
+    try {
+        const clientsSnapshot = await get(ref(getDatabase(app), "clients"));
+        const clientsData = clientsSnapshot.val();
+        return clientsData ? Object.entries(clientsData).map(([id, client]) => ({ id, ...client })) : [];
+    } catch (error) {
+        console.error("Error fetching all clients:", error);
+        throw error;
+    }
+};
+
+//Add a new client
+export const addClient = async (clientName, businessName, email, whatsappNumber = null, clientNotes = null, servicesAvailed = null) => {
+    try {
+        const clientsRef = ref(getDatabase(app), "clients");
+        const newClientRef = push(clientsRef);
+        await set(newClientRef, {
+            clientName,
+            businessName,
+            email,
+            whatsappNumber,
+            clientNotes,
+            servicesAvailed,
+            createdAt: serverTimestamp(),
+        });
+
+        return { id: newClientRef.key, clientName, businessName, email, whatsappNumber, clientNotes, servicesAvailed };
+    } catch (error) {
+        console.error("Error adding client:", error);
+        throw error;
+    }
+};
+
+//Delete a client by their ID
+export const deleteClient = async (clientId) => {
+    try {
+        const clientRef = ref(getDatabase(app), `clients/${clientId}`);
+        const clientSnapshot = await get(clientRef);
+
+        if (!clientSnapshot.exists()) {
+            throw new Error("Client not found");
+        }
+
+        await remove(clientRef);
+        return { id: clientId, ...clientSnapshot.val() };
+    } catch (error) {
+        console.error("Error deleting client:", error);
+        throw error;
+    }
+};
+
+//Edit a client's details by their ID
+export const editClient = async (clientId, { clientName, businessName, email, whatsappNumber, clientNotes, servicesAvailed } = {}) => {
+    try {
+        const clientRef = ref(getDatabase(app), `clients/${clientId}`);
+        const clientSnapshot = await get(clientRef);
+
+        if (!clientSnapshot.exists()) {
+            throw new Error("Client not found");
+        }
+
+        const updatedData = {};
+        if (clientName !== undefined) updatedData.clientName = clientName;
+        if (businessName !== undefined) updatedData.businessName = businessName;
+        if (email !== undefined) updatedData.email = email;
+        if (whatsappNumber !== undefined) updatedData.whatsappNumber = whatsappNumber;
+        if (clientNotes !== undefined) updatedData.clientNotes = clientNotes;
+        if (servicesAvailed !== undefined) updatedData.servicesAvailed = servicesAvailed;
+        const finalData = { ...clientSnapshot.val(), ...updatedData };
+        await set(clientRef, finalData);
+        return { id: clientId, ...finalData };
+    } catch (error) {
+        console .error("Error editing client:", error); 
+         throw error;
+    }
+};
+
+//client inquiry function (a client sends an inquiry to the business)
+export const clientInquiry = async (clientName, email, message) => {
+    try {
+        const inquiriesRef = ref(getDatabase(app), "inquiries");
+        const newInquiryRef = push(inquiriesRef);
+        await set(newInquiryRef, {
+            clientName,
+            email,
+            message,
+            createdAt: serverTimestamp(),
+        });
+
+        return { id: newInquiryRef.key, clientName, email, message };
+    } catch (error) {
+        console.error("Error sending client inquiry:", error);
+        throw error;
+    }
+};
