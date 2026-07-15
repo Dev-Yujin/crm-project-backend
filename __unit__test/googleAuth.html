@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Supabase Google Auth Test</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; }
+  button { padding: 10px 16px; margin-right: 8px; cursor: pointer; }
+  pre { background: #f4f4f4; padding: 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+  #status { font-weight: bold; margin: 12px 0; }
+</style>
+</head>
+<body>
+<h1>Supabase Google Sign In / Sign Up Test</h1>
+
+<div id="status">Checking session...</div>
+
+<button id="google-btn">Sign In / Sign Up with Google</button>
+<button id="signout-btn" style="display:none;">Sign Out</button>
+
+<h3>Session</h3>
+<pre id="session-output">(none)</pre>
+
+<script>
+  // Same values as SUPABASE_PROJECT_URL / SUPABASE_ANON_KEY in .env
+  const SUPABASE_PROJECT_URL = 'https://aapqxpauzjkeqjjjziyj.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFhcHF4cGF1emprZXFqamp6aXlqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQwOTQ5MjksImV4cCI6MjA5OTY3MDkyOX0.kTlw5eYT2n6F8BHCc0Y_nUNjprStIlxMdjJ8FEEJrj0';
+
+  const { createClient } = supabase;
+  const client = createClient(SUPABASE_PROJECT_URL, SUPABASE_ANON_KEY);
+
+  const statusEl = document.getElementById('status');
+  const outputEl = document.getElementById('session-output');
+  const googleBtn = document.getElementById('google-btn');
+  const signOutBtn = document.getElementById('signout-btn');
+
+  function renderSession(session) {
+    if (session) {
+      statusEl.textContent = `Signed in as ${session.user.email}`;
+      googleBtn.style.display = 'none';
+      signOutBtn.style.display = 'inline-block';
+    } else {
+      statusEl.textContent = 'Not signed in';
+      googleBtn.style.display = 'inline-block';
+      signOutBtn.style.display = 'none';
+    }
+    outputEl.textContent = JSON.stringify(session, null, 2);
+  }
+
+  // Restores the session after Google redirects back to this page
+  client.auth.getSession().then(({ data }) => renderSession(data.session));
+
+  client.auth.onAuthStateChange((_event, session) => renderSession(session));
+
+  googleBtn.addEventListener('click', async () => {
+    const { error } = await client.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.href },
+    });
+    if (error) {
+      statusEl.textContent = `Error: ${error.message}`;
+    }
+  });
+
+  signOutBtn.addEventListener('click', async () => {
+    await client.auth.signOut();
+    renderSession(null);
+  });
+</script>
+</body>
+</html>
