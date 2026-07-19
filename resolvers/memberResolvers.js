@@ -1,7 +1,10 @@
 import {
+    getAllMembers,
     addMember,
     deleteMember,
     editMemberProfile,
+    loginMember,
+    fetchMemberFromToken,
 } from '../models/membersFunction.js';
 import { requireUser } from '../utils/requireUser.js';
 
@@ -13,7 +16,22 @@ const mapMember = (row) => row && {
 };
 
 const memberResolvers = {
+    Query: {
+        members: async (_, __, context) => {
+            requireUser(context);
+            const members = await getAllMembers();
+            return members.map(mapMember);
+        },
+        currentMember: async (_, { token }) => {
+            const member = await fetchMemberFromToken(token);
+            return mapMember(member);
+        },
+    },
     Mutation: {
+        loginMember: async (_, { email, password }) => {
+            const { member, token } = await loginMember(email, password);
+            return { member: mapMember(member), token };
+        },
         addMember: async (_, { username, email, password }, context) => {
             requireUser(context);
             const member = await addMember(username, email, password);

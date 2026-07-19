@@ -52,6 +52,7 @@ const taskTypeDefs = `#graphql
 
   type Query {
     tasks: [Task!]!
+    tasksForMember(memberUuid: ID!): [Task!]!
   }
 
   type Mutation {

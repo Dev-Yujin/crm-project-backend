@@ -3,7 +3,7 @@
 This backend exposes a single GraphQL endpoint (Apollo Server) at `http://<ip>:<port>/`, backed by:
 - **Supabase Auth** — sign up / login / Google OAuth for **users** (staff/admin accounts)
 - **Postgres (Supabase pooler)** — `members` table (CRM staff added by users)
-- **Firebase Realtime Database** — `jobs`, `departments`, `services`, `clients`, `tasks`
+- **Firebase Realtime Database** — `departments`, `services`, `clients`, `tasks`
 
 No GraphQL client library is used here — just plain `fetch()` POSTs against the URL/port. The only package you need is `@supabase/supabase-js`, for Google Sign In/Sign Up.
 
@@ -148,13 +148,13 @@ It automatically grabs whatever Supabase session is active and attaches it as `A
 
 **Example usage:**
 ```ts
-const GET_JOBS = `
-  query GetJobs {
-    jobs { id title createdAt members { uuid username email assignedAt } }
+const GET_DEPARTMENTS = `
+  query GetDepartments {
+    departments { id name createdAt members { uuid username email assignedAt } }
   }
 `;
 
-const { jobs } = await graphqlRequest<{ jobs: Job[] }>(GET_JOBS);
+const { departments } = await graphqlRequest<{ departments: Department[] }>(GET_DEPARTMENTS);
 ```
 
 **Error handling** — every mutation that requires a signed-in user throws a GraphQL error with `extensions.code === 'UNAUTHENTICATED'`. Since `graphqlRequest` above only surfaces `error.message`, check the raw response if you need the code:
@@ -185,19 +185,9 @@ export interface Member {
   email: string;
   createdAt: string | null;
 }
-
-// --- Job ---
-export interface JobMember {
-  uuid: string;
-  username: string;
-  email: string;
-  assignedAt: string | null;
-}
-export interface Job {
-  id: string;
-  title: string;
-  createdAt: string | null;
-  members: JobMember[];
+export interface MemberAuthPayload {
+  member: Member;
+  token: string; // member JWT, 7-day expiry — separate from the Supabase user session
 }
 
 // --- Department ---
@@ -277,10 +267,11 @@ export interface Task {
 | `currentUser(accessToken)` | Query | none | pass a token explicitly, mostly for debugging |
 | `registerUser` / `loginUser` / `signInWithGoogle` | Mutation | none | prefer `supabase-js` directly (§2) instead |
 | `signOutUser` | Mutation | none | prefer `supabase.auth.signOut()` |
+| `members` | Query | **user** | full member roster; use to build "assign member" dropdowns |
 | `addMember` / `deleteMember` | Mutation | **user** | only users manage members |
-| `editMemberProfile` | Mutation | none | member editing their own profile; no session to verify identity |
-| `jobs` | Query | none | members need to read this without login |
-| `addJob` / `addMemberToJob` / `removeMemberFromJob` | Mutation | **user** | |
+| `loginMember` | Mutation | none | member login, returns a member JWT (separate from the Supabase user session) |
+| `currentMember(token)` | Query | none | verify/restore a stored member token |
+| `editMemberProfile` | Mutation | none | member editing their own profile; not yet tied to the login token — `uuid` is still a plain, unverified argument |
 | `departments` | Query | none | members need to read their own department without login |
 | `addDepartment` / `addMemberToDepartment` / `removeMemberFromDepartment` | Mutation | **user** | a member can currently belong to more than one department — nothing enforces exclusivity |
 | `services` | Query | none | public catalog (e.g. "Web Development", "Video Editing") |
@@ -288,7 +279,8 @@ export interface Task {
 | `clients` | Query | **user** | client records are treated as sensitive |
 | `addClient` / `deleteClient` / `editClient` | Mutation | **user** | `servicesAvailed` must be IDs that exist in the `services` catalog |
 | `clientInquiry` | Mutation | none | public — submitted by a prospect with no account |
-| `tasks` | Query | none | members need to read their assigned tasks |
+| `tasks` | Query | none | all tasks; members need to read this without login |
+| `tasksForMember(memberUuid)` | Query | none | filtered to one member's assigned tasks — use for a "my tasks" screen |
 | `addTask` / `deleteTask` / `reviewTask` | Mutation | **user** | `createdBy`/`reviewedBy` come from the session, not client input |
 | `editTask` / `submitTask` | Mutation | none | member actions; `memberUuid` is self-declared |
 
@@ -305,6 +297,32 @@ All of these are plain GraphQL query/mutation strings — pass them straight int
 ### Members
 
 ```ts
+const GET_MEMBERS = `
+  query GetMembers {
+    members { uuid username email createdAt }
+  }
+`;
+
+// Member login — separate from Google/user login in §2. Returns a member-scoped
+// JWT (7-day expiry), NOT a Supabase session. Store it separately (e.g. its own
+// localStorage key) and don't pass it as the GraphQL Authorization header —
+// graphqlRequest (§3) only attaches the Supabase user session there.
+const LOGIN_MEMBER = `
+  mutation LoginMember($email: String!, $password: String!) {
+    loginMember(email: $email, password: $password) {
+      member { uuid username email createdAt }
+      token
+    }
+  }
+`;
+
+// Verify a stored member token is still valid / restore the member on app load
+const CURRENT_MEMBER = `
+  query CurrentMember($token: String!) {
+    currentMember(token: $token) { uuid username email createdAt }
+  }
+`;
+
 const ADD_MEMBER = `
   mutation AddMember($username: String!, $email: String!, $password: String!) {
     addMember(username: $username, email: $email, password: $password) {
@@ -329,36 +347,6 @@ const EDIT_MEMBER_PROFILE = `
 
 // usage
 await graphqlRequest(ADD_MEMBER, { username: 'jane', email: 'jane@example.com', password: 'secret123' });
-```
-
-### Jobs
-
-```ts
-const GET_JOBS = `
-  query GetJobs {
-    jobs { id title createdAt members { uuid username email assignedAt } }
-  }
-`;
-
-const ADD_JOB = `
-  mutation AddJob($title: String!) {
-    addJob(title: $title) { id title createdAt members { uuid } }
-  }
-`;
-
-const ADD_MEMBER_TO_JOB = `
-  mutation AddMemberToJob($jobId: ID!, $memberUuid: ID!) {
-    addMemberToJob(jobId: $jobId, memberUuid: $memberUuid) {
-      uuid username email assignedAt
-    }
-  }
-`;
-
-const REMOVE_MEMBER_FROM_JOB = `
-  mutation RemoveMemberFromJob($jobId: ID!, $memberUuid: ID!) {
-    removeMemberFromJob(jobId: $jobId, memberUuid: $memberUuid)
-  }
-`;
 ```
 
 ### Departments
@@ -502,6 +490,18 @@ const CLIENT_INQUIRY = `
 const GET_TASKS = `
   query GetTasks {
     tasks {
+      id clientId clientName taskName taskDescription serviceId
+      assignedMembers dueDate createdBy priority status createdAt
+      submission { link note submittedBy submittedAt }
+      revisions { id comment status reviewedBy reviewedAt }
+    }
+  }
+`;
+
+// Use this for a member's "my tasks" screen instead of GET_TASKS — no auth needed
+const GET_TASKS_FOR_MEMBER = `
+  query GetTasksForMember($memberUuid: ID!) {
+    tasksForMember(memberUuid: $memberUuid) {
       id clientId clientName taskName taskDescription serviceId
       assignedMembers dueDate createdBy priority status createdAt
       submission { link note submittedBy submittedAt }

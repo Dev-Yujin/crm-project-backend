@@ -1,5 +1,6 @@
 import {
     getAllTasks,
+    getTasksForMember,
     addTask,
     deleteTask,
     editTask,
@@ -44,6 +45,10 @@ const taskResolvers = {
     Query: {
         tasks: async () => {
             const tasks = await getAllTasks();
+            return tasks.map(mapTask);
+        },
+        tasksForMember: async (_, { memberUuid }) => {
+            const tasks = await getTasksForMember(memberUuid);
             return tasks.map(mapTask);
         },
     },
