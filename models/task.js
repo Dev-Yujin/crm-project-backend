@@ -69,6 +69,17 @@ export const getAllTasks = async () => {
     }
 };
 
+//Fetch only the tasks assigned to a given member
+export const getTasksForMember = async (memberUuid) => {
+    try {
+        const tasks = await getAllTasks();
+        return tasks.filter((task) => task.assignedMembers.includes(memberUuid));
+    } catch (error) {
+        console.error("Error fetching tasks for member:", error);
+        throw error;
+    }
+};
+
 //Add a new task (created by a user, assigned to one or more members, tied to one of the client's availed services)
 export const addTask = async (clientId, clientName, taskName, taskDescription, serviceId, assignedMembers = [], dueDate = null, createdBy, priority = TASK_PRIORITY.MEDIUM) => {
     try {
