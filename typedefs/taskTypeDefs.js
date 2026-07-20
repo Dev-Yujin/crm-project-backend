@@ -48,6 +48,7 @@ const taskTypeDefs = `#graphql
     createdAt: String
     submission: Submission
     revisions: [Revision!]!
+    recurringTaskId: ID
   }
 
   type Query {

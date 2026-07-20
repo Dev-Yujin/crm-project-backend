@@ -18,7 +18,7 @@ export const TASK_PRIORITY = {
     URGENT: "URGENT",
 };
 
-const validateMembersExist = async (memberUuids) => {
+export const validateMembersExist = async (memberUuids) => {
     if (!memberUuids || memberUuids.length === 0) {
         throw new Error("At least one assigned member is required");
     }
@@ -33,7 +33,7 @@ const validateMembersExist = async (memberUuids) => {
 };
 
 //A task's service must be one of the services its client actually avails
-const validateServiceForClient = async (clientId, serviceId) => {
+export const validateServiceForClient = async (clientId, serviceId) => {
     const clientSnapshot = await get(ref(db, `clients/${clientId}`));
 
     if (!clientSnapshot.exists()) {
@@ -81,7 +81,8 @@ export const getTasksForMember = async (memberUuid) => {
 };
 
 //Add a new task (created by a user, assigned to one or more members, tied to one of the client's availed services)
-export const addTask = async (clientId, clientName, taskName, taskDescription, serviceId, assignedMembers = [], dueDate = null, createdBy, priority = TASK_PRIORITY.MEDIUM) => {
+//recurringTaskId is set internally when a recurring task template generates an instance — not exposed on the public addTask mutation
+export const addTask = async (clientId, clientName, taskName, taskDescription, serviceId, assignedMembers = [], dueDate = null, createdBy, priority = TASK_PRIORITY.MEDIUM, recurringTaskId = null) => {
     try {
         await validateMembersExist(assignedMembers);
         await validateServiceForClient(clientId, serviceId);
@@ -98,6 +99,7 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
             dueDate,
             createdBy,
             priority,
+            recurringTaskId,
             status: TASK_STATUS.PENDING,
             createdAt: serverTimestamp(),
         });
@@ -113,6 +115,7 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
             dueDate,
             createdBy,
             priority,
+            recurringTaskId,
             status: TASK_STATUS.PENDING,
             revisions: [],
         };

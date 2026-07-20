@@ -39,6 +39,7 @@ const mapTask = (task) => task && {
     createdAt: task.createdAt != null ? String(task.createdAt) : null,
     submission: mapSubmission(task.submission),
     revisions: (task.revisions ?? []).map(mapRevision),
+    recurringTaskId: task.recurringTaskId ?? null,
 };
 
 const taskResolvers = {

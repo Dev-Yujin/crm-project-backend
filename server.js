@@ -12,13 +12,18 @@ import departmentTypeDefs from './typedefs/departmentTypeDefs.js';
 import departmentResolvers from './resolvers/departmentResolvers.js';
 import serviceTypeDefs from './typedefs/serviceTypeDefs.js';
 import serviceResolvers from './resolvers/serviceResolvers.js';
+import recurringTaskTypeDefs from './typedefs/recurringTaskTypeDefs.js';
+import recurringTaskResolvers from './resolvers/recurringTaskResolvers.js';
 import { fetchCurrentUser } from './models/userFunctions.js';
+import { startScheduler } from './utils/scheduler.js';
 
 
 const server = new ApolloServer({
-  typeDefs:[userTypeDefs, memberTypeDefs, clientTypeDefs, taskTypeDefs, departmentTypeDefs, serviceTypeDefs],
-  resolvers:[userResolvers, memberResolvers, clientResolvers, taskResolvers, departmentResolvers, serviceResolvers],
+  typeDefs:[userTypeDefs, memberTypeDefs, clientTypeDefs, taskTypeDefs, departmentTypeDefs, serviceTypeDefs, recurringTaskTypeDefs],
+  resolvers:[userResolvers, memberResolvers, clientResolvers, taskResolvers, departmentResolvers, serviceResolvers, recurringTaskResolvers],
 });
+
+startScheduler();
 
 const { url } = await startStandaloneServer(server, {
   context: async ({ req }) => {
