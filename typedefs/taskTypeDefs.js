@@ -1,6 +1,7 @@
 const taskTypeDefs = `#graphql
   enum TaskStatus {
     PENDING
+    IN_PROGRESS
     SUBMITTED
     FOR_REVISION
     COMPLETED
@@ -48,6 +49,7 @@ const taskTypeDefs = `#graphql
     createdAt: String
     submission: Submission
     revisions: [Revision!]!
+    recurringTaskId: ID
   }
 
   type Query {
@@ -78,6 +80,7 @@ const taskTypeDefs = `#graphql
       priority: TaskPriority
     ): Task!
     deleteTask(taskId: ID!): Task!
+    startTask(taskId: ID!, memberUuid: ID!): Task!
     submitTask(taskId: ID!, memberUuid: ID!, link: String!, note: String): Task!
     reviewTask(taskId: ID!, comment: String!, decision: ReviewDecision!): Task!
   }

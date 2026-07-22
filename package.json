@@ -20,6 +20,7 @@
     "firebase": "^12.16.0",
     "graphql": "^16.14.2",
     "jsonwebtoken": "^9.0.3",
+    "node-cron": "^4.6.0",
     "nodemon": "^3.1.14",
     "pg": "^8.22.0"
   }
