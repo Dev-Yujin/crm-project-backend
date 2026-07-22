@@ -6,6 +6,7 @@ const db = getDatabase(app);
 
 export const TASK_STATUS = {
     PENDING: "PENDING",
+    IN_PROGRESS: "IN_PROGRESS",
     SUBMITTED: "SUBMITTED",
     FOR_REVISION: "FOR_REVISION",
     COMPLETED: "COMPLETED",
@@ -187,6 +188,40 @@ export const editTask = async (taskId, { clientId, clientName, taskName, taskDes
     }
 };
 
+//A member marks a task as started, moving it from PENDING into IN_PROGRESS
+export const startTask = async (taskId, memberUuid) => {
+    try {
+        const taskRef = ref(db, `tasks/${taskId}`);
+        const taskSnapshot = await get(taskRef);
+
+        if (!taskSnapshot.exists()) {
+            throw new Error("Task not found");
+        }
+
+        const task = taskSnapshot.val();
+
+        if (!(task.assignedMembers ?? []).includes(memberUuid)) {
+            throw new Error("This member is not assigned to this task");
+        }
+
+        if (task.status !== TASK_STATUS.PENDING) {
+            throw new Error(`Task cannot be started while status is ${task.status}`);
+        }
+
+        await update(taskRef, { status: TASK_STATUS.IN_PROGRESS });
+
+        return {
+            id: taskId,
+            ...task,
+            status: TASK_STATUS.IN_PROGRESS,
+            revisions: mapRevisions(task.revisions),
+        };
+    } catch (error) {
+        console.error("Error starting task:", error);
+        throw error;
+    }
+};
+
 //A member submits (or resubmits, after a revision request) their work on a task
 export const submitTask = async (taskId, memberUuid, link, note = null) => {
     try {
@@ -203,7 +238,7 @@ export const submitTask = async (taskId, memberUuid, link, note = null) => {
             throw new Error("This member is not assigned to this task");
         }
 
-        if (task.status === TASK_STATUS.SUBMITTED || task.status === TASK_STATUS.COMPLETED) {
+        if (task.status !== TASK_STATUS.IN_PROGRESS && task.status !== TASK_STATUS.FOR_REVISION) {
             throw new Error(`Task cannot be submitted while status is ${task.status}`);
         }
 

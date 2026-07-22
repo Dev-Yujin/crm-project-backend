@@ -4,6 +4,7 @@ import {
     addTask,
     deleteTask,
     editTask,
+    startTask,
     submitTask,
     reviewTask,
 } from '../models/task.js';
@@ -68,8 +69,12 @@ const taskResolvers = {
             const task = await deleteTask(taskId);
             return mapTask(task);
         },
-        // Member action: no bearer auth (members have no login mechanism yet),
+        // Member actions: no bearer auth (members have no login mechanism yet),
         // memberUuid is self-declared and checked against the task's assignedMembers
+        startTask: async (_, { taskId, memberUuid }) => {
+            const task = await startTask(taskId, memberUuid);
+            return mapTask(task);
+        },
         submitTask: async (_, { taskId, memberUuid, link, note }) => {
             const task = await submitTask(taskId, memberUuid, link, note);
             return mapTask(task);
