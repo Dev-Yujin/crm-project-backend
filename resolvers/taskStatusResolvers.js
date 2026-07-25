@@ -4,26 +4,26 @@ import {
     updateTaskStatus,
     deleteTaskStatus,
 } from '../models/taskStatuses.js';
-import { requireUser } from '../utils/requireUser.js';
+import { requireGroup, resolveGroupId } from '../utils/requireUser.js';
 
 const taskStatusResolvers = {
     Query: {
-        taskStatuses: async () => {
-            return getAllTaskStatuses();
+        taskStatuses: async (_, { groupId }, context) => {
+            return getAllTaskStatuses(resolveGroupId(context, groupId));
         },
     },
     Mutation: {
         addTaskStatus: async (_, { name }, context) => {
-            requireUser(context);
-            return addTaskStatus(name);
+            const groupId = requireGroup(context);
+            return addTaskStatus(name, groupId);
         },
         updateTaskStatus: async (_, { taskStatusId, name }, context) => {
-            requireUser(context);
-            return updateTaskStatus(taskStatusId, name);
+            const groupId = requireGroup(context);
+            return updateTaskStatus(taskStatusId, name, groupId);
         },
         deleteTaskStatus: async (_, { taskStatusId }, context) => {
-            requireUser(context);
-            return deleteTaskStatus(taskStatusId);
+            const groupId = requireGroup(context);
+            return deleteTaskStatus(taskStatusId, groupId);
         },
     },
 };

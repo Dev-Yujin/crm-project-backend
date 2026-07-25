@@ -7,6 +7,7 @@ const clientTypeDefs = `#graphql
     whatsappNumber: String
     clientNotes: String
     servicesAvailed: [ID!]
+    groupId: ID!
     createdAt: String
   }
 

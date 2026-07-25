@@ -6,20 +6,21 @@ import {
     loginMember,
     fetchMemberFromToken,
 } from '../models/membersFunction.js';
-import { requireUser } from '../utils/requireUser.js';
+import { requireGroup } from '../utils/requireUser.js';
 
 const mapMember = (row) => row && {
     uuid: row.uuid,
     username: row.username,
     email: row.email,
+    groupId: row.group_id ?? null,
     createdAt: row.created_at?.toISOString?.() ?? row.created_at ?? null,
 };
 
 const memberResolvers = {
     Query: {
         members: async (_, __, context) => {
-            requireUser(context);
-            const members = await getAllMembers();
+            const groupId = requireGroup(context);
+            const members = await getAllMembers(groupId);
             return members.map(mapMember);
         },
         currentMember: async (_, { token }) => {
@@ -33,13 +34,13 @@ const memberResolvers = {
             return { member: mapMember(member), token };
         },
         addMember: async (_, { username, email, password }, context) => {
-            requireUser(context);
-            const member = await addMember(username, email, password);
+            const groupId = requireGroup(context);
+            const member = await addMember(username, email, password, groupId);
             return mapMember(member);
         },
         deleteMember: async (_, { uuid }, context) => {
-            requireUser(context);
-            const member = await deleteMember(uuid);
+            const groupId = requireGroup(context);
+            const member = await deleteMember(uuid, groupId);
             return mapMember(member);
         },
         editMemberProfile: async (_, { uuid, username, email, password }) => {

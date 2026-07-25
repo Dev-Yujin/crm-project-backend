@@ -4,26 +4,26 @@ import {
     updateService,
     deleteService,
 } from '../models/services.js';
-import { requireUser } from '../utils/requireUser.js';
+import { requireGroup, resolveGroupId } from '../utils/requireUser.js';
 
 const serviceResolvers = {
     Query: {
-        services: async () => {
-            return getAllServices();
+        services: async (_, { groupId }, context) => {
+            return getAllServices(resolveGroupId(context, groupId));
         },
     },
     Mutation: {
         addService: async (_, { name }, context) => {
-            requireUser(context);
-            return addService(name);
+            const groupId = requireGroup(context);
+            return addService(name, groupId);
         },
         updateService: async (_, { serviceId, name }, context) => {
-            requireUser(context);
-            return updateService(serviceId, name);
+            const groupId = requireGroup(context);
+            return updateService(serviceId, name, groupId);
         },
         deleteService: async (_, { serviceId }, context) => {
-            requireUser(context);
-            return deleteService(serviceId);
+            const groupId = requireGroup(context);
+            return deleteService(serviceId, groupId);
         },
     },
 };

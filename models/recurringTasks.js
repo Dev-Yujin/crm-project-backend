@@ -28,10 +28,10 @@ const computeNextRun = (from, recurrence) => {
 };
 
 //Create a recurring task template and immediately generate its first task instance
-export const addRecurringTask = async (clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, createdBy, recurrence, priority = TASK_PRIORITY.MEDIUM) => {
+export const addRecurringTask = async (clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, createdBy, recurrence, priority = TASK_PRIORITY.MEDIUM, groupId) => {
     try {
-        await validateMembersExist(assignedMembers);
-        await validateServiceForClient(clientId, serviceId);
+        await validateMembersExist(assignedMembers, groupId);
+        await validateServiceForClient(clientId, serviceId, groupId);
 
         const recurringTasksRef = ref(db, "recurringTasks");
         const newTemplateRef = push(recurringTasksRef);
@@ -47,6 +47,7 @@ export const addRecurringTask = async (clientId, clientName, taskName, taskDescr
             createdBy,
             priority,
             recurrence,
+            groupId,
             active: true,
             lastRunAt: now,
             nextRunAt: computeNextRun(now, recurrence),
@@ -54,7 +55,7 @@ export const addRecurringTask = async (clientId, clientName, taskName, taskDescr
 
         await set(newTemplateRef, template);
 
-        await addTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, null, createdBy, priority, newTemplateRef.key);
+        await addTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, null, createdBy, priority, newTemplateRef.key, null, null, groupId);
 
         return { id: newTemplateRef.key, ...template };
     } catch (error) {
@@ -63,25 +64,31 @@ export const addRecurringTask = async (clientId, clientName, taskName, taskDescr
     }
 };
 
-//Fetch all recurring task templates
-export const getAllRecurringTasks = async () => {
+//Fetch every recurring task template across all groups — used only by the scheduler's cron tick
+const getAllRecurringTasksAcrossGroups = async () => {
+    const snapshot = await get(ref(db, "recurringTasks"));
+    const data = snapshot.val();
+    return data ? Object.entries(data).map(([id, template]) => ({ id, ...template })) : [];
+};
+
+//Fetch all recurring task templates belonging to a group
+export const getAllRecurringTasks = async (groupId) => {
     try {
-        const snapshot = await get(ref(db, "recurringTasks"));
-        const data = snapshot.val();
-        return data ? Object.entries(data).map(([id, template]) => ({ id, ...template })) : [];
+        const templates = await getAllRecurringTasksAcrossGroups();
+        return templates.filter((template) => template.groupId === groupId);
     } catch (error) {
         console.error("Error fetching recurring tasks:", error);
         throw error;
     }
 };
 
-//Delete a recurring task template (already-generated task instances are left untouched)
-export const deleteRecurringTask = async (recurringTaskId) => {
+//Delete a recurring task template (already-generated task instances are left untouched). Must belong to the caller's group.
+export const deleteRecurringTask = async (recurringTaskId, groupId) => {
     try {
         const templateRef = ref(db, `recurringTasks/${recurringTaskId}`);
         const snapshot = await get(templateRef);
 
-        if (!snapshot.exists()) {
+        if (!snapshot.exists() || snapshot.val().groupId !== groupId) {
             throw new Error("Recurring task not found");
         }
 
@@ -93,11 +100,11 @@ export const deleteRecurringTask = async (recurringTaskId) => {
     }
 };
 
-const setActive = async (recurringTaskId, active) => {
+const setActive = async (recurringTaskId, active, groupId) => {
     const templateRef = ref(db, `recurringTasks/${recurringTaskId}`);
     const snapshot = await get(templateRef);
 
-    if (!snapshot.exists()) {
+    if (!snapshot.exists() || snapshot.val().groupId !== groupId) {
         throw new Error("Recurring task not found");
     }
 
@@ -105,30 +112,30 @@ const setActive = async (recurringTaskId, active) => {
     return { id: recurringTaskId, ...snapshot.val(), active };
 };
 
-//Pause a recurring task template — the scheduler skips it until resumed
-export const pauseRecurringTask = async (recurringTaskId) => {
+//Pause a recurring task template — the scheduler skips it until resumed. Must belong to the caller's group.
+export const pauseRecurringTask = async (recurringTaskId, groupId) => {
     try {
-        return await setActive(recurringTaskId, false);
+        return await setActive(recurringTaskId, false, groupId);
     } catch (error) {
         console.error("Error pausing recurring task:", error);
         throw error;
     }
 };
 
-//Resume a paused recurring task template
-export const resumeRecurringTask = async (recurringTaskId) => {
+//Resume a paused recurring task template. Must belong to the caller's group.
+export const resumeRecurringTask = async (recurringTaskId, groupId) => {
     try {
-        return await setActive(recurringTaskId, true);
+        return await setActive(recurringTaskId, true, groupId);
     } catch (error) {
         console.error("Error resuming recurring task:", error);
         throw error;
     }
 };
 
-//Scheduler tick: generate one task instance for every active template that's due,
+//Scheduler tick: generate one task instance for every active template that's due (across all groups),
 //then advance nextRunAt (catching up past any missed cycles without spamming instances)
 export const runDueRecurringTasks = async () => {
-    const templates = await getAllRecurringTasks();
+    const templates = await getAllRecurringTasksAcrossGroups();
     const now = Date.now();
     const generated = [];
 
@@ -146,7 +153,10 @@ export const runDueRecurringTasks = async () => {
                 null,
                 template.createdBy,
                 template.priority,
-                template.id
+                template.id,
+                null,
+                null,
+                template.groupId
             );
             generated.push(task);
 

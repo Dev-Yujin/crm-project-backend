@@ -3,6 +3,7 @@ import { app } from "../config/firebase.js";
 import { pool } from "../config/supabase.js";
 import { validateTaskStatusExists } from "./taskStatuses.js";
 import { validateDepartmentExists } from "./departments.js";
+import { fetchMemberGroupId } from "../utils/groups.js";
 
 const db = getDatabase(app);
 
@@ -13,12 +14,12 @@ export const TASK_PRIORITY = {
     URGENT: "URGENT",
 };
 
-export const validateMembersExist = async (memberUuids) => {
+export const validateMembersExist = async (memberUuids, groupId) => {
     if (!memberUuids || memberUuids.length === 0) {
         throw new Error("At least one assigned member is required");
     }
 
-    const result = await pool.query("SELECT uuid FROM members WHERE uuid = ANY($1)", [memberUuids]);
+    const result = await pool.query("SELECT uuid FROM members WHERE uuid = ANY($1) AND group_id = $2", [memberUuids, groupId]);
     const foundUuids = new Set(result.rows.map((row) => row.uuid));
     const missing = memberUuids.filter((uuid) => !foundUuids.has(uuid));
 
@@ -27,11 +28,11 @@ export const validateMembersExist = async (memberUuids) => {
     }
 };
 
-//A task's service must be one of the services its client actually avails
-export const validateServiceForClient = async (clientId, serviceId) => {
+//A task's service must be one of the services its client actually avails, and the client must belong to the caller's group
+export const validateServiceForClient = async (clientId, serviceId, groupId) => {
     const clientSnapshot = await get(ref(db, `clients/${clientId}`));
 
-    if (!clientSnapshot.exists()) {
+    if (!clientSnapshot.exists() || clientSnapshot.val().groupId !== groupId) {
         throw new Error("Client not found");
     }
 
@@ -45,12 +46,12 @@ export const validateServiceForClient = async (clientId, serviceId) => {
 const mapRevisions = (revisions) =>
     revisions ? Object.entries(revisions).map(([id, revision]) => ({ id, ...revision })) : [];
 
-//Fetch All Tasks
-export const getAllTasks = async () => {
+//Fetch all tasks belonging to a group
+export const getAllTasks = async (groupId) => {
     try {
         const tasksSnapshot = await get(ref(db, "tasks"));
         const tasksData = tasksSnapshot.val();
-        return tasksData
+        const tasks = tasksData
             ? Object.entries(tasksData).map(([id, task]) => ({
                   id,
                   ...task,
@@ -58,16 +59,18 @@ export const getAllTasks = async () => {
                   revisions: mapRevisions(task.revisions),
               }))
             : [];
+        return tasks.filter((task) => task.groupId === groupId);
     } catch (error) {
         console.error("Error fetching all tasks:", error);
         throw error;
     }
 };
 
-//Fetch only the tasks assigned to a given member
+//Fetch only the tasks assigned to a given member, scoped to that member's own group
 export const getTasksForMember = async (memberUuid) => {
     try {
-        const tasks = await getAllTasks();
+        const groupId = await fetchMemberGroupId(memberUuid);
+        const tasks = await getAllTasks(groupId);
         return tasks.filter((task) => task.assignedMembers.includes(memberUuid));
     } catch (error) {
         console.error("Error fetching tasks for member:", error);
@@ -78,12 +81,12 @@ export const getTasksForMember = async (memberUuid) => {
 //Add a new task (created by a user, assigned to one or more members, tied to one of the client's availed services)
 //statusId is optional and freely chosen from the user-managed task status catalog — there is no fixed workflow
 //recurringTaskId is set internally when a recurring task template generates an instance — not exposed on the public addTask mutation
-export const addTask = async (clientId, clientName, taskName, taskDescription, serviceId, assignedMembers = [], dueDate = null, createdBy, priority = TASK_PRIORITY.MEDIUM, recurringTaskId = null, statusId = null, departmentId = null) => {
+export const addTask = async (clientId, clientName, taskName, taskDescription, serviceId, assignedMembers = [], dueDate = null, createdBy, priority = TASK_PRIORITY.MEDIUM, recurringTaskId = null, statusId = null, departmentId = null, groupId) => {
     try {
-        await validateMembersExist(assignedMembers);
-        await validateServiceForClient(clientId, serviceId);
-        await validateTaskStatusExists(statusId);
-        await validateDepartmentExists(departmentId);
+        await validateMembersExist(assignedMembers, groupId);
+        await validateServiceForClient(clientId, serviceId, groupId);
+        await validateTaskStatusExists(statusId, groupId);
+        await validateDepartmentExists(departmentId, groupId);
 
         const tasksRef = ref(db, "tasks");
         const newTaskRef = push(tasksRef);
@@ -100,6 +103,7 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
             recurringTaskId,
             statusId,
             departmentId,
+            groupId,
             createdAt: serverTimestamp(),
         });
 
@@ -117,6 +121,7 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
             recurringTaskId,
             statusId,
             departmentId,
+            groupId,
             revisions: [],
         };
     } catch (error) {
@@ -125,13 +130,13 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
     }
 };
 
-//Delete a task by its ID
-export const deleteTask = async (taskId) => {
+//Delete a task by its ID (must belong to the caller's group)
+export const deleteTask = async (taskId, groupId) => {
     try {
         const taskRef = ref(db, `tasks/${taskId}`);
         const taskSnapshot = await get(taskRef);
 
-        if (!taskSnapshot.exists()) {
+        if (!taskSnapshot.exists() || taskSnapshot.val().groupId !== groupId) {
             throw new Error("Task not found");
         }
 
@@ -143,35 +148,36 @@ export const deleteTask = async (taskId) => {
     }
 };
 
-//Edit a task's details, including freely setting its statusId — there is no fixed workflow gating this
-export const editTask = async (taskId, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId } = {}) => {
+//Edit a task's details, including freely setting its statusId — there is no fixed workflow gating this. Must belong to the caller's group.
+export const editTask = async (taskId, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId } = {}, groupId) => {
     try {
         const taskRef = ref(db, `tasks/${taskId}`);
         const taskSnapshot = await get(taskRef);
 
-        if (!taskSnapshot.exists()) {
+        if (!taskSnapshot.exists() || taskSnapshot.val().groupId !== groupId) {
             throw new Error("Task not found");
         }
 
         const task = taskSnapshot.val();
 
         if (assignedMembers !== undefined) {
-            await validateMembersExist(assignedMembers);
+            await validateMembersExist(assignedMembers, groupId);
         }
 
         if (clientId !== undefined || serviceId !== undefined) {
             await validateServiceForClient(
                 clientId !== undefined ? clientId : task.clientId,
-                serviceId !== undefined ? serviceId : task.serviceId
+                serviceId !== undefined ? serviceId : task.serviceId,
+                groupId
             );
         }
 
         if (statusId !== undefined) {
-            await validateTaskStatusExists(statusId);
+            await validateTaskStatusExists(statusId, groupId);
         }
 
         if (departmentId !== undefined) {
-            await validateDepartmentExists(departmentId);
+            await validateDepartmentExists(departmentId, groupId);
         }
 
         const updatedTaskData = {
@@ -234,13 +240,13 @@ export const submitTask = async (taskId, memberUuid, link, note = null) => {
     }
 };
 
-//A user leaves a review comment on a task, logged to its revision history. Callable anytime — not gated by status.
-export const reviewTask = async (taskId, reviewedBy, comment) => {
+//A user leaves a review comment on a task, logged to its revision history. Callable anytime — not gated by status. Must belong to the caller's group.
+export const reviewTask = async (taskId, reviewedBy, comment, groupId) => {
     try {
         const taskRef = ref(db, `tasks/${taskId}`);
         const taskSnapshot = await get(taskRef);
 
-        if (!taskSnapshot.exists()) {
+        if (!taskSnapshot.exists() || taskSnapshot.val().groupId !== groupId) {
             throw new Error("Task not found");
         }
 

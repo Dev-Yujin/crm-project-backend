@@ -7,7 +7,7 @@ import {
     submitTask,
     reviewTask,
 } from '../models/task.js';
-import { requireUser } from '../utils/requireUser.js';
+import { requireUser, requireGroup } from '../utils/requireUser.js';
 
 const mapSubmission = (submission) => submission && {
     link: submission.link,
@@ -36,6 +36,7 @@ const mapTask = (task) => task && {
     priority: task.priority,
     statusId: task.statusId ?? null,
     departmentId: task.departmentId ?? null,
+    groupId: task.groupId,
     createdAt: task.createdAt != null ? String(task.createdAt) : null,
     submission: mapSubmission(task.submission),
     revisions: (task.revisions ?? []).map(mapRevision),
@@ -44,8 +45,9 @@ const mapTask = (task) => task && {
 
 const taskResolvers = {
     Query: {
-        tasks: async () => {
-            const tasks = await getAllTasks();
+        tasks: async (_, __, context) => {
+            const groupId = requireGroup(context);
+            const tasks = await getAllTasks(groupId);
             return tasks.map(mapTask);
         },
         tasksForMember: async (_, { memberUuid }) => {
@@ -56,16 +58,18 @@ const taskResolvers = {
     Mutation: {
         addTask: async (_, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId }, context) => {
             const user = requireUser(context);
-            const task = await addTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, user.id, priority, null, statusId, departmentId);
+            const groupId = requireGroup(context);
+            const task = await addTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, user.id, priority, null, statusId, departmentId, groupId);
             return mapTask(task);
         },
-        editTask: async (_, { taskId, ...updates }) => {
-            const task = await editTask(taskId, updates);
+        editTask: async (_, { taskId, ...updates }, context) => {
+            const groupId = requireGroup(context);
+            const task = await editTask(taskId, updates, groupId);
             return mapTask(task);
         },
         deleteTask: async (_, { taskId }, context) => {
-            requireUser(context);
-            const task = await deleteTask(taskId);
+            const groupId = requireGroup(context);
+            const task = await deleteTask(taskId, groupId);
             return mapTask(task);
         },
         // Member action: no bearer auth (members have no login mechanism yet),
@@ -76,7 +80,8 @@ const taskResolvers = {
         },
         reviewTask: async (_, { taskId, comment }, context) => {
             const user = requireUser(context);
-            const task = await reviewTask(taskId, user.id, comment);
+            const groupId = requireGroup(context);
+            const task = await reviewTask(taskId, user.id, comment, groupId);
             return mapTask(task);
         },
     },

@@ -27,6 +27,8 @@ Key behaviors to know before building the UI:
 
 Everything here is a **user**-only feature (same as `addTask`/`deleteTask`/`reviewTask`) — members don't manage recurring templates. Send `Authorization: Bearer <session.access_token>` via `graphqlRequest` from §3 of the main doc.
 
+Like everything else, recurring task templates are scoped to the caller's group (derived automatically from the session — see "Groups" in `FRONTEND_INTEGRATION.md`). A template's generated `Task` instances inherit the same `groupId`.
+
 | Operation | Type | Auth required |
 |---|---|---|
 | `recurringTasks` | Query | **user** |
@@ -53,6 +55,7 @@ export interface RecurringTask {
   active: boolean;
   lastRunAt: string | null; // when the scheduler last generated an instance
   nextRunAt: string | null; // when it's next due
+  groupId: string; // scoped to the caller's group, same as everything else — see "Groups" in FRONTEND_INTEGRATION.md
 }
 ```
 
@@ -71,7 +74,7 @@ const GET_RECURRING_TASKS = `
   query GetRecurringTasks {
     recurringTasks {
       id clientId clientName taskName taskDescription serviceId
-      assignedMembers priority recurrence createdBy active lastRunAt nextRunAt
+      assignedMembers priority recurrence createdBy active lastRunAt nextRunAt groupId
     }
   }
 `;
@@ -97,7 +100,7 @@ const ADD_RECURRING_TASK = `
       recurrence: $recurrence
       priority: $priority
     ) {
-      id taskName recurrence active nextRunAt
+      id taskName recurrence active nextRunAt groupId
     }
   }
 `;

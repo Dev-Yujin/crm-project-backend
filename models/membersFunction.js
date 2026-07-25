@@ -1,11 +1,11 @@
 import { pool } from '../config/supabase.js';
 import { hashPassword, comparePasswords, generateMemberToken, verifyMemberToken } from '../utils/authUser.js';
-//Add, Delete, Edit Profile, and Login functions for CRM members
+//Add, Delete, Edit Profile, and Login functions for CRM members — scoped per group
 
 //Login function
 export const loginMember = async (email, password) => {
     try {
-        const query = 'SELECT uuid, username, email, password FROM members WHERE email = $1';
+        const query = 'SELECT uuid, username, email, password, group_id FROM members WHERE email = $1';
         const result = await pool.query(query, [email]);
 
         if (result.rows.length === 0) {
@@ -31,7 +31,7 @@ export const loginMember = async (email, password) => {
 export const fetchMemberFromToken = async (token) => {
     try {
         const decoded = verifyMemberToken(token);
-        const query = 'SELECT uuid, username, email, created_at FROM members WHERE uuid = $1';
+        const query = 'SELECT uuid, username, email, group_id, created_at FROM members WHERE uuid = $1';
         const result = await pool.query(query, [decoded.uuid]);
 
         if (result.rows.length === 0) {
@@ -45,11 +45,11 @@ export const fetchMemberFromToken = async (token) => {
     }
 };
 
-//Fetch all members
-export const getAllMembers = async () => {
+//Fetch all members belonging to a group
+export const getAllMembers = async (groupId) => {
     try {
-        const query = 'SELECT uuid, username, email, created_at FROM members';
-        const result = await pool.query(query);
+        const query = 'SELECT uuid, username, email, group_id, created_at FROM members WHERE group_id = $1';
+        const result = await pool.query(query, [groupId]);
         return result.rows;
     } catch (error) {
         console.error('Error fetching all members:', error);
@@ -57,12 +57,12 @@ export const getAllMembers = async () => {
     }
 };
 
-//Add member function
-export const addMember = async (username, email, password) => {
+//Add member function — added to the caller's group
+export const addMember = async (username, email, password, groupId) => {
     try {
         const hashedPassword = await hashPassword(password);
-        const query = 'INSERT INTO members (username, email, password) VALUES ($1, $2, $3) RETURNING uuid, username, email, created_at';
-        const values = [username, email, hashedPassword];
+        const query = 'INSERT INTO members (username, email, password, group_id) VALUES ($1, $2, $3, $4) RETURNING uuid, username, email, group_id, created_at';
+        const values = [username, email, hashedPassword, groupId];
         const result = await pool.query(query, values);
         return result.rows[0];
     } catch (error) {
@@ -71,11 +71,11 @@ export const addMember = async (username, email, password) => {
     }
 };
 
-//Delete member function
-export const deleteMember = async (uuid) => {
+//Delete member function (must belong to the caller's group)
+export const deleteMember = async (uuid, groupId) => {
     try {
-        const query = 'DELETE FROM members WHERE uuid = $1 RETURNING uuid, username, email, created_at';
-        const result = await pool.query(query, [uuid]);
+        const query = 'DELETE FROM members WHERE uuid = $1 AND group_id = $2 RETURNING uuid, username, email, group_id, created_at';
+        const result = await pool.query(query, [uuid, groupId]);
 
         if (result.rows.length === 0) {
             throw new Error('Member not found');
@@ -113,7 +113,7 @@ export const editMemberProfile = async (uuid, { username, email, password } = {}
         }
 
         values.push(uuid);
-        const query = `UPDATE members SET ${fields.join(', ')} WHERE uuid = $${i} RETURNING uuid, username, email, created_at`;
+        const query = `UPDATE members SET ${fields.join(', ')} WHERE uuid = $${i} RETURNING uuid, username, email, group_id, created_at`;
         const result = await pool.query(query, values);
 
         if (result.rows.length === 0) {

@@ -5,7 +5,7 @@ import {
     pauseRecurringTask,
     resumeRecurringTask,
 } from '../models/recurringTasks.js';
-import { requireUser } from '../utils/requireUser.js';
+import { requireUser, requireGroup } from '../utils/requireUser.js';
 
 const mapRecurringTask = (template) => template && {
     id: template.id,
@@ -21,34 +21,36 @@ const mapRecurringTask = (template) => template && {
     active: template.active,
     lastRunAt: template.lastRunAt != null ? String(template.lastRunAt) : null,
     nextRunAt: template.nextRunAt != null ? String(template.nextRunAt) : null,
+    groupId: template.groupId,
 };
 
 const recurringTaskResolvers = {
     Query: {
         recurringTasks: async (_, __, context) => {
-            requireUser(context);
-            const templates = await getAllRecurringTasks();
+            const groupId = requireGroup(context);
+            const templates = await getAllRecurringTasks(groupId);
             return templates.map(mapRecurringTask);
         },
     },
     Mutation: {
         addRecurringTask: async (_, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, recurrence, priority }, context) => {
             const user = requireUser(context);
-            const template = await addRecurringTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, user.id, recurrence, priority);
+            const groupId = requireGroup(context);
+            const template = await addRecurringTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, user.id, recurrence, priority, groupId);
             return mapRecurringTask(template);
         },
         deleteRecurringTask: async (_, { recurringTaskId }, context) => {
-            requireUser(context);
-            return deleteRecurringTask(recurringTaskId);
+            const groupId = requireGroup(context);
+            return deleteRecurringTask(recurringTaskId, groupId);
         },
         pauseRecurringTask: async (_, { recurringTaskId }, context) => {
-            requireUser(context);
-            const template = await pauseRecurringTask(recurringTaskId);
+            const groupId = requireGroup(context);
+            const template = await pauseRecurringTask(recurringTaskId, groupId);
             return mapRecurringTask(template);
         },
         resumeRecurringTask: async (_, { recurringTaskId }, context) => {
-            requireUser(context);
-            const template = await resumeRecurringTask(recurringTaskId);
+            const groupId = requireGroup(context);
+            const template = await resumeRecurringTask(recurringTaskId, groupId);
             return mapRecurringTask(template);
         },
     },

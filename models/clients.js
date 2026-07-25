@@ -3,22 +3,23 @@ import { app } from "../config/firebase.js";
 import { pool } from "../config/supabase.js";
 import { validateServicesExist } from "./services.js";
 
-//Fetch All Clients
-export const getAllClients = async () => {
+//Fetch all clients belonging to a group
+export const getAllClients = async (groupId) => {
     try {
         const clientsSnapshot = await get(ref(getDatabase(app), "clients"));
         const clientsData = clientsSnapshot.val();
-        return clientsData ? Object.entries(clientsData).map(([id, client]) => ({ id, ...client })) : [];
+        const clients = clientsData ? Object.entries(clientsData).map(([id, client]) => ({ id, ...client })) : [];
+        return clients.filter((client) => client.groupId === groupId);
     } catch (error) {
         console.error("Error fetching all clients:", error);
         throw error;
     }
 };
 
-//Add a new client
-export const addClient = async (clientName, businessName, email, whatsappNumber = null, clientNotes = null, servicesAvailed = null) => {
+//Add a new client to a group
+export const addClient = async (clientName, businessName, email, whatsappNumber = null, clientNotes = null, servicesAvailed = null, groupId) => {
     try {
-        await validateServicesExist(servicesAvailed);
+        await validateServicesExist(servicesAvailed, groupId);
 
         const clientsRef = ref(getDatabase(app), "clients");
         const newClientRef = push(clientsRef);
@@ -29,23 +30,24 @@ export const addClient = async (clientName, businessName, email, whatsappNumber 
             whatsappNumber,
             clientNotes,
             servicesAvailed,
+            groupId,
             createdAt: serverTimestamp(),
         });
 
-        return { id: newClientRef.key, clientName, businessName, email, whatsappNumber, clientNotes, servicesAvailed };
+        return { id: newClientRef.key, clientName, businessName, email, whatsappNumber, clientNotes, servicesAvailed, groupId };
     } catch (error) {
         console.error("Error adding client:", error);
         throw error;
     }
 };
 
-//Delete a client by their ID
-export const deleteClient = async (clientId) => {
+//Delete a client by their ID (must belong to the caller's group)
+export const deleteClient = async (clientId, groupId) => {
     try {
         const clientRef = ref(getDatabase(app), `clients/${clientId}`);
         const clientSnapshot = await get(clientRef);
 
-        if (!clientSnapshot.exists()) {
+        if (!clientSnapshot.exists() || clientSnapshot.val().groupId !== groupId) {
             throw new Error("Client not found");
         }
 
@@ -57,18 +59,18 @@ export const deleteClient = async (clientId) => {
     }
 };
 
-//Edit a client's details by their ID
-export const editClient = async (clientId, { clientName, businessName, email, whatsappNumber, clientNotes, servicesAvailed } = {}) => {
+//Edit a client's details by their ID (must belong to the caller's group)
+export const editClient = async (clientId, { clientName, businessName, email, whatsappNumber, clientNotes, servicesAvailed } = {}, groupId) => {
     try {
         const clientRef = ref(getDatabase(app), `clients/${clientId}`);
         const clientSnapshot = await get(clientRef);
 
-        if (!clientSnapshot.exists()) {
+        if (!clientSnapshot.exists() || clientSnapshot.val().groupId !== groupId) {
             throw new Error("Client not found");
         }
 
         if (servicesAvailed !== undefined) {
-            await validateServicesExist(servicesAvailed);
+            await validateServicesExist(servicesAvailed, groupId);
         }
 
         const updatedData = {};
@@ -82,12 +84,12 @@ export const editClient = async (clientId, { clientName, businessName, email, wh
         await set(clientRef, finalData);
         return { id: clientId, ...finalData };
     } catch (error) {
-        console .error("Error editing client:", error); 
-         throw error;
+        console.error("Error editing client:", error);
+        throw error;
     }
 };
 
-//client inquiry function (a client sends an inquiry to the business)
+//client inquiry function (a client sends an inquiry to the business) — not scoped by group, public contact form
 export const clientInquiry = async (clientName, email, message) => {
     try {
         const inquiriesRef = ref(getDatabase(app), "inquiries");

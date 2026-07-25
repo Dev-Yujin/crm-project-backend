@@ -3,6 +3,7 @@ const memberTypeDefs = `#graphql
     uuid: ID!
     username: String!
     email: String!
+    groupId: ID
     createdAt: String
   }
 

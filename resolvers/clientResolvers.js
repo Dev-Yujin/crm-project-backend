@@ -5,7 +5,7 @@ import {
     editClient,
     clientInquiry,
 } from '../models/clients.js';
-import { requireUser } from '../utils/requireUser.js';
+import { requireGroup } from '../utils/requireUser.js';
 
 const mapClient = (row) => row && {
     id: row.id,
@@ -15,6 +15,7 @@ const mapClient = (row) => row && {
     whatsappNumber: row.whatsappNumber ?? null,
     clientNotes: row.clientNotes ?? null,
     servicesAvailed: row.servicesAvailed ?? null,
+    groupId: row.groupId,
     createdAt: row.createdAt != null ? String(row.createdAt) : null,
 };
 
@@ -28,25 +29,25 @@ const mapInquiry = (row) => row && {
 const clientResolvers = {
     Query: {
         clients: async (_, __, context) => {
-            requireUser(context);
-            const clients = await getAllClients();
+            const groupId = requireGroup(context);
+            const clients = await getAllClients(groupId);
             return clients.map(mapClient);
         },
     },
     Mutation: {
         addClient: async (_, { clientName, businessName, email, whatsappNumber, clientNotes, servicesAvailed }, context) => {
-            requireUser(context);
-            const client = await addClient(clientName, businessName, email, whatsappNumber, clientNotes, servicesAvailed);
+            const groupId = requireGroup(context);
+            const client = await addClient(clientName, businessName, email, whatsappNumber, clientNotes, servicesAvailed, groupId);
             return mapClient(client);
         },
         deleteClient: async (_, { clientId }, context) => {
-            requireUser(context);
-            const client = await deleteClient(clientId);
+            const groupId = requireGroup(context);
+            const client = await deleteClient(clientId, groupId);
             return mapClient(client);
         },
         editClient: async (_, { clientId, ...updates }, context) => {
-            requireUser(context);
-            const client = await editClient(clientId, updates);
+            const groupId = requireGroup(context);
+            const client = await editClient(clientId, updates, groupId);
             return mapClient(client);
         },
         // Public: submitted by a client with no account, not a "user" or "member"

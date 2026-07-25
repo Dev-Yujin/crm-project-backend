@@ -19,6 +19,7 @@ const recurringTaskTypeDefs = `#graphql
     active: Boolean!
     lastRunAt: String
     nextRunAt: String
+    groupId: ID!
   }
 
   type Query {

@@ -33,6 +33,7 @@ const taskTypeDefs = `#graphql
     priority: TaskPriority!
     statusId: ID
     departmentId: ID
+    groupId: ID!
     createdAt: String
     submission: Submission
     revisions: [Revision!]!

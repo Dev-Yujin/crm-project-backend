@@ -16,13 +16,16 @@ import recurringTaskTypeDefs from './typedefs/recurringTaskTypeDefs.js';
 import recurringTaskResolvers from './resolvers/recurringTaskResolvers.js';
 import taskStatusTypeDefs from './typedefs/taskStatusTypeDefs.js';
 import taskStatusResolvers from './resolvers/taskStatusResolvers.js';
+import groupTypeDefs from './typedefs/groupTypeDefs.js';
+import groupResolvers from './resolvers/groupResolvers.js';
 import { fetchCurrentUser } from './models/userFunctions.js';
+import { fetchUserGroupId } from './utils/groups.js';
 import { startScheduler } from './utils/scheduler.js';
 
 
 const server = new ApolloServer({
-  typeDefs:[userTypeDefs, memberTypeDefs, clientTypeDefs, taskTypeDefs, departmentTypeDefs, serviceTypeDefs, recurringTaskTypeDefs, taskStatusTypeDefs],
-  resolvers:[userResolvers, memberResolvers, clientResolvers, taskResolvers, departmentResolvers, serviceResolvers, recurringTaskResolvers, taskStatusResolvers],
+  typeDefs:[userTypeDefs, memberTypeDefs, clientTypeDefs, taskTypeDefs, departmentTypeDefs, serviceTypeDefs, recurringTaskTypeDefs, taskStatusTypeDefs, groupTypeDefs],
+  resolvers:[userResolvers, memberResolvers, clientResolvers, taskResolvers, departmentResolvers, serviceResolvers, recurringTaskResolvers, taskStatusResolvers, groupResolvers],
 });
 
 startScheduler();
@@ -33,14 +36,15 @@ const { url } = await startStandaloneServer(server, {
     const accessToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
     if (!accessToken) {
-      return { user: null };
+      return { user: null, groupId: null };
     }
 
     try {
       const user = await fetchCurrentUser(accessToken);
-      return { user };
+      const groupId = await fetchUserGroupId(user.id);
+      return { user, groupId };
     } catch {
-      return { user: null };
+      return { user: null, groupId: null };
     }
   },
 });

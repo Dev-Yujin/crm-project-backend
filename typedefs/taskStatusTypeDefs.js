@@ -2,10 +2,11 @@ const taskStatusTypeDefs = `#graphql
   type TaskStatus {
     id: ID!
     name: String!
+    groupId: ID!
   }
 
   type Query {
-    taskStatuses: [TaskStatus!]!
+    taskStatuses(groupId: ID): [TaskStatus!]!
   }
 
   type Mutation {

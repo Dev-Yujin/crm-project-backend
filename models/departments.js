@@ -1,39 +1,40 @@
 import { getDatabase, ref, push, set, get, remove, serverTimestamp } from "firebase/database";
 import { app } from "../config/firebase.js";
 import { pool } from "../config/supabase.js";
-//Create a Department, and assign members (from the Postgres members table) to that Department
+//Create a Department, and assign members (from the Postgres members table) to that Department — scoped per group
 
 const db = getDatabase(app);
 
 //Add department function
-export const addDepartment = async (name) => {
+export const addDepartment = async (name, groupId) => {
     try {
         const departmentsRef = ref(db, "departments");
         const newDepartmentRef = push(departmentsRef);
         await set(newDepartmentRef, {
             name,
+            groupId,
             createdAt: serverTimestamp(),
         });
 
-        return { id: newDepartmentRef.key, name };
+        return { id: newDepartmentRef.key, name, groupId };
     } catch (error) {
         console.error("Error adding department:", error);
         throw error;
     }
 };
 
-//Add a member (by their members.uuid) to a department
-export const addMemberToDepartment = async (departmentId, memberUuid) => {
+//Add a member (by their members.uuid) to a department (both must belong to the caller's group)
+export const addMemberToDepartment = async (departmentId, memberUuid, groupId) => {
     try {
         const departmentRef = ref(db, `departments/${departmentId}`);
         const departmentSnapshot = await get(departmentRef);
 
-        if (!departmentSnapshot.exists()) {
+        if (!departmentSnapshot.exists() || departmentSnapshot.val().groupId !== groupId) {
             throw new Error("Department not found");
         }
 
-        const memberQuery = "SELECT uuid, username, email FROM members WHERE uuid = $1";
-        const result = await pool.query(memberQuery, [memberUuid]);
+        const memberQuery = "SELECT uuid, username, email FROM members WHERE uuid = $1 AND group_id = $2";
+        const result = await pool.query(memberQuery, [memberUuid, groupId]);
 
         if (result.rows.length === 0) {
             throw new Error("Member not found");
@@ -54,9 +55,16 @@ export const addMemberToDepartment = async (departmentId, memberUuid) => {
     }
 };
 
-//Remove a member from a department
-export const removeMemberFromDepartment = async (departmentId, memberUuid) => {
+//Remove a member from a department (must belong to the caller's group)
+export const removeMemberFromDepartment = async (departmentId, memberUuid, groupId) => {
     try {
+        const departmentRef = ref(db, `departments/${departmentId}`);
+        const departmentSnapshot = await get(departmentRef);
+
+        if (!departmentSnapshot.exists() || departmentSnapshot.val().groupId !== groupId) {
+            throw new Error("Department not found");
+        }
+
         const memberRef = ref(db, `departments/${departmentId}/members/${memberUuid}`);
         const memberSnapshot = await get(memberRef);
 
@@ -72,19 +80,8 @@ export const removeMemberFromDepartment = async (departmentId, memberUuid) => {
     }
 };
 
-//No-op if departmentId is null, otherwise throws if it's not in the departments catalog
-export const validateDepartmentExists = async (departmentId) => {
-    if (departmentId == null) return;
-
-    const departmentSnapshot = await get(ref(db, `departments/${departmentId}`));
-
-    if (!departmentSnapshot.exists()) {
-        throw new Error("Department not found");
-    }
-};
-
-//Fetch all departments, along with their assigned members
-export const getAllDepartments = async () => {
+//Fetch all departments belonging to a group, along with their assigned members
+export const getAllDepartments = async (groupId) => {
     try {
         const departmentsSnapshot = await get(ref(db, "departments"));
 
@@ -92,19 +89,33 @@ export const getAllDepartments = async () => {
             return [];
         }
 
-        return Object.entries(departmentsSnapshot.val()).map(([id, department]) => ({
-            id,
-            name: department.name,
-            createdAt: department.createdAt,
-            members: Object.entries(department.members ?? {}).map(([uuid, member]) => ({
-                uuid,
-                username: member.username,
-                email: member.email,
-                assignedAt: member.assignedAt,
-            })),
-        }));
+        return Object.entries(departmentsSnapshot.val())
+            .filter(([, department]) => department.groupId === groupId)
+            .map(([id, department]) => ({
+                id,
+                name: department.name,
+                groupId: department.groupId,
+                createdAt: department.createdAt,
+                members: Object.entries(department.members ?? {}).map(([uuid, member]) => ({
+                    uuid,
+                    username: member.username,
+                    email: member.email,
+                    assignedAt: member.assignedAt,
+                })),
+            }));
     } catch (error) {
         console.error("Error fetching departments:", error);
         throw error;
+    }
+};
+
+//No-op if departmentId is null, otherwise throws if it's not in the caller's group's departments catalog
+export const validateDepartmentExists = async (departmentId, groupId) => {
+    if (departmentId == null) return;
+
+    const departmentSnapshot = await get(ref(db, `departments/${departmentId}`));
+
+    if (!departmentSnapshot.exists() || departmentSnapshot.val().groupId !== groupId) {
+        throw new Error("Department not found");
     }
 };

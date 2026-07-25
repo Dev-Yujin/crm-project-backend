@@ -4,11 +4,12 @@ import {
     getAllDepartments,
     removeMemberFromDepartment,
 } from '../models/departments.js';
-import { requireUser } from '../utils/requireUser.js';
+import { requireGroup, resolveGroupId } from '../utils/requireUser.js';
 
 const mapDepartment = (department) => ({
     id: department.id,
     name: department.name,
+    groupId: department.groupId,
     createdAt: department.createdAt != null ? String(department.createdAt) : null,
     members: (department.members ?? []).map(mapDepartmentMember),
 });
@@ -22,25 +23,25 @@ const mapDepartmentMember = (member) => ({
 
 const departmentResolvers = {
     Query: {
-        departments: async () => {
-            const departments = await getAllDepartments();
+        departments: async (_, { groupId }, context) => {
+            const departments = await getAllDepartments(resolveGroupId(context, groupId));
             return departments.map(mapDepartment);
         },
     },
     Mutation: {
         addDepartment: async (_, { name }, context) => {
-            requireUser(context);
-            const department = await addDepartment(name);
+            const groupId = requireGroup(context);
+            const department = await addDepartment(name, groupId);
             return mapDepartment(department);
         },
         addMemberToDepartment: async (_, { departmentId, memberUuid }, context) => {
-            requireUser(context);
-            const member = await addMemberToDepartment(departmentId, memberUuid);
+            const groupId = requireGroup(context);
+            const member = await addMemberToDepartment(departmentId, memberUuid, groupId);
             return mapDepartmentMember(member);
         },
         removeMemberFromDepartment: async (_, { departmentId, memberUuid }, context) => {
-            requireUser(context);
-            return removeMemberFromDepartment(departmentId, memberUuid);
+            const groupId = requireGroup(context);
+            return removeMemberFromDepartment(departmentId, memberUuid, groupId);
         },
     },
 };

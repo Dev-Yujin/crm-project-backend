@@ -2,7 +2,7 @@
 
 This backend exposes a single GraphQL endpoint (Apollo Server) at `http://<ip>:<port>/`, backed by:
 - **Supabase Auth** — sign up / login / Google OAuth for **users** (staff/admin accounts)
-- **Postgres (Supabase pooler)** — `members` table (CRM staff added by users)
+- **Postgres (Supabase pooler)** — `members` table (CRM staff added by users), `groups` table (which group each user/member belongs to)
 - **Firebase Realtime Database** — `departments`, `services`, `taskStatuses`, `clients`, `tasks`
 
 No GraphQL client library is used here — just plain `fetch()` POSTs against the URL/port. The only package you need is `@supabase/supabase-js`, for Google Sign In/Sign Up.
@@ -12,6 +12,17 @@ Daily/weekly/monthly recurring tasks are a separate feature layered on top of `T
 There are two actors in this system:
 - **user** — a Supabase Auth account (owns login, Google sign-in). Required for all create/delete/review/management mutations.
 - **member** — a row in the `members` table, added by a user. Members currently have **no login/session mechanism**, so member-facing mutations (`submitTask`, `editTask`) are unauthenticated and take a `memberUuid` argument directly.
+
+### Groups (multi-tenant data isolation)
+
+Every piece of data — `clients`, `tasks`, `members`, `departments`, `services`, `taskStatuses`, `recurringTasks` — belongs to exactly one **group**, and every operation is scoped to a single group. This is what keeps one team's data invisible to another.
+
+- A brand-new signed-in user with no group yet calls `createGroup` to spin up their own group, or `joinGroup(joinCode)` to join a teammate's existing group using a code they shared. Your Supabase Auth session doesn't carry a groupId itself — the backend looks it up server-side from the `groups` table on every authenticated request.
+- **If your signed-in user has no group assigned yet, every group-scoped query/mutation fails** with a GraphQL error where `extensions.code === 'NO_GROUP'` ("Your account is not assigned to a group yet. Contact an admin."). This is the trigger for showing an onboarding screen: "Create a group" / "Join with a code" — see §6 "Groups" below.
+- A single user belongs to **exactly one** group — `createGroup`/`joinGroup` both reject if you already belong to one.
+- A **member** inherits their group automatically from whoever added them (`addMember` stamps the creating user's group onto the new member) — a member always belongs to exactly one group, and you never set this yourself.
+- For a signed-in **user**, groupId is always derived server-side from their session — you never pass it as an argument, and if you did, it would be ignored (the backend never trusts a client-supplied groupId once it can authenticate you).
+- The three **public catalog queries** members rely on without logging in — `services`, `departments`, `taskStatuses` — are the exception: since there's no session to derive a group from, they accept an optional `groupId` argument. A member gets their own `groupId` from `loginMember`/`currentMember` (see §4/§6) and passes it along explicitly on every call. If you call one of these while signed in as a user, omit the argument — your session's group wins automatically.
 
 ---
 
@@ -150,21 +161,24 @@ It automatically grabs whatever Supabase session is active and attaches it as `A
 
 **Example usage:**
 ```ts
-const GET_DEPARTMENTS = `
-  query GetDepartments {
-    departments { id name createdAt members { uuid username email assignedAt } }
+const GET_MY_GROUP = `
+  query MyGroup {
+    myGroup { groupId joinCode }
   }
 `;
 
-const { departments } = await graphqlRequest<{ departments: Department[] }>(GET_DEPARTMENTS);
+const { myGroup } = await graphqlRequest<{ myGroup: Group | null }>(GET_MY_GROUP);
 ```
 
-**Error handling** — every mutation that requires a signed-in user throws a GraphQL error with `extensions.code === 'UNAUTHENTICATED'`. Since `graphqlRequest` above only surfaces `error.message`, check the raw response if you need the code:
+**Error handling** — every mutation that requires a signed-in user throws a GraphQL error with `extensions.code === 'UNAUTHENTICATED'`. A signed-in user whose account has no group yet gets `extensions.code === 'NO_GROUP'` instead (see the "Groups" section above) — treat it as a distinct case, not a login failure. Since `graphqlRequest` above only surfaces `error.message`, check the raw response if you need the code:
 ```ts
 const res = await fetch(GRAPHQL_URL, { /* ... */ });
 const json = await res.json();
 if (json.errors?.[0]?.extensions?.code === 'UNAUTHENTICATED') {
   // redirect to login
+}
+if (json.errors?.[0]?.extensions?.code === 'NO_GROUP') {
+  // signed in, but not assigned to a group yet — show "contact an admin", don't redirect to login
 }
 ```
 
@@ -180,11 +194,18 @@ export interface User {
   name: string | null;
 }
 
+// --- Group ---
+export interface Group {
+  groupId: string;
+  joinCode: string; // share this with teammates so they can joinGroup with it
+}
+
 // --- Member ---
 export interface Member {
   uuid: string;
   username: string;
   email: string;
+  groupId: string | null; // inherited from whoever added them; use this for the services/departments/taskStatuses groupId arg
   createdAt: string | null;
 }
 export interface MemberAuthPayload {
@@ -202,6 +223,7 @@ export interface DepartmentMember {
 export interface Department {
   id: string;
   name: string;
+  groupId: string;
   createdAt: string | null;
   members: DepartmentMember[];
 }
@@ -210,6 +232,7 @@ export interface Department {
 export interface Service {
   id: string;
   name: string;
+  groupId: string;
 }
 
 // --- Client ---
@@ -221,6 +244,7 @@ export interface Client {
   whatsappNumber: string | null;
   clientNotes: string | null;
   servicesAvailed: string[] | null; // Service IDs — join against Service[] to display names
+  groupId: string;
   createdAt: string | null;
 }
 
@@ -228,6 +252,7 @@ export interface Client {
 export interface TaskStatus {
   id: string;
   name: string;
+  groupId: string;
 }
 
 // --- Task ---
@@ -258,6 +283,7 @@ export interface Task {
   priority: TaskPriority;
   statusId: string | null; // freely settable, references the TaskStatus catalog — no fixed workflow or gating
   departmentId: string | null; // optional, references the Department catalog — purely informational, not validated against assignedMembers
+  groupId: string;
   createdAt: string | null;
   submission: Submission | null;
   revisions: Revision[];
@@ -271,30 +297,33 @@ export interface Task {
 
 | Operation | Type | Auth required | Notes |
 |---|---|---|---|
+| `myGroup` | Query | **user** | returns `null` if not in a group yet (rather than throwing `NO_GROUP`) — use this one to check group status, not the other group-scoped queries |
+| `createGroup` | Mutation | **user** | fails if you already belong to a group |
+| `joinGroup(joinCode)` | Mutation | **user** | fails if the code is invalid, or if you already belong to a group |
 | `currentUser(accessToken)` | Query | none | pass a token explicitly, mostly for debugging |
 | `registerUser` / `loginUser` / `signInWithGoogle` | Mutation | none | prefer `supabase-js` directly (§2) instead |
 | `signOutUser` | Mutation | none | prefer `supabase.auth.signOut()` |
-| `members` | Query | **user** | full member roster; use to build "assign member" dropdowns |
-| `addMember` / `deleteMember` | Mutation | **user** | only users manage members |
-| `loginMember` | Mutation | none | member login, returns a member JWT (separate from the Supabase user session) |
-| `currentMember(token)` | Query | none | verify/restore a stored member token |
+| `members` | Query | **user** | full roster of the caller's own group; use to build "assign member" dropdowns |
+| `addMember` / `deleteMember` | Mutation | **user** | only users manage members; new members are stamped with the creating user's `groupId` automatically |
+| `loginMember` | Mutation | none | member login, returns a member JWT (separate from the Supabase user session) plus the member's `groupId` |
+| `currentMember(token)` | Query | none | verify/restore a stored member token; also returns `groupId` |
 | `editMemberProfile` | Mutation | none | member editing their own profile; not yet tied to the login token — `uuid` is still a plain, unverified argument |
-| `departments` | Query | none | members need to read their own department without login |
-| `addDepartment` / `addMemberToDepartment` / `removeMemberFromDepartment` | Mutation | **user** | a member can currently belong to more than one department — nothing enforces exclusivity |
-| `services` | Query | none | public catalog (e.g. "Web Development", "Video Editing") |
-| `addService` / `updateService` / `deleteService` | Mutation | **user** | deleting a service in use by a client/task doesn't cascade — leaves a dangling ID |
-| `clients` | Query | **user** | client records are treated as sensitive |
-| `addClient` / `deleteClient` / `editClient` | Mutation | **user** | `servicesAvailed` must be IDs that exist in the `services` catalog |
-| `clientInquiry` | Mutation | none | public — submitted by a prospect with no account |
-| `taskStatuses` | Query | none | public catalog of user-defined task statuses (e.g. "Pending", "On Going", "Done") |
-| `addTaskStatus` / `updateTaskStatus` / `deleteTaskStatus` | Mutation | **user** | same non-cascading caveat as services — deleting one in use leaves a dangling `statusId` on any task referencing it |
-| `addTask` / `editTask` `departmentId` arg | Mutation arg | **user** | optional; must reference an existing `Department`. Same non-cascading caveat — deleting a department in use leaves a dangling `departmentId` on any task referencing it. Purely informational (e.g. "this task belongs to the Video Editing dept.") — it is **not** validated against `assignedMembers`, so a task can be tagged to a department none of its assignees belong to |
-| `tasks` | Query | none | all tasks; members need to read this without login |
-| `tasksForMember(memberUuid)` | Query | none | filtered to one member's assigned tasks — use for a "my tasks" screen |
-| `addTask` / `deleteTask` / `reviewTask` | Mutation | **user** | `createdBy`/`reviewedBy` come from the session, not client input |
+| `departments(groupId)` | Query | none for members (`groupId` arg required) / **user** (`groupId` derived from session, arg ignored) | members need to read their own department without login |
+| `addDepartment` / `addMemberToDepartment` / `removeMemberFromDepartment` | Mutation | **user** | scoped to the caller's group; a member can currently belong to more than one department — nothing enforces exclusivity |
+| `services(groupId)` | Query | none for members (`groupId` arg required) / **user** (`groupId` derived from session, arg ignored) | public catalog (e.g. "Web Development", "Video Editing"), scoped per group |
+| `addService` / `updateService` / `deleteService` | Mutation | **user** | scoped to the caller's group; deleting a service in use by a client/task doesn't cascade — leaves a dangling ID |
+| `clients` | Query | **user** | client records are treated as sensitive; scoped to the caller's group |
+| `addClient` / `deleteClient` / `editClient` | Mutation | **user** | `servicesAvailed` must be IDs that exist in the caller's group's `services` catalog |
+| `clientInquiry` | Mutation | none | public — submitted by a prospect with no account; **not** scoped to a group (there's no way for an anonymous prospect to indicate one) |
+| `taskStatuses(groupId)` | Query | none for members (`groupId` arg required) / **user** (`groupId` derived from session, arg ignored) | public catalog of user-defined task statuses (e.g. "Pending", "On Going", "Done"), scoped per group |
+| `addTaskStatus` / `updateTaskStatus` / `deleteTaskStatus` | Mutation | **user** | scoped to the caller's group; same non-cascading caveat as services — deleting one in use leaves a dangling `statusId` on any task referencing it |
+| `addTask` / `editTask` `departmentId` arg | Mutation arg | **user** | optional; must reference an existing `Department` in the caller's group. Same non-cascading caveat — deleting a department in use leaves a dangling `departmentId` on any task referencing it. Purely informational (e.g. "this task belongs to the Video Editing dept.") — it is **not** validated against `assignedMembers`, so a task can be tagged to a department none of its assignees belong to |
+| `tasks` | Query | **user** | all tasks in the caller's group |
+| `tasksForMember(memberUuid)` | Query | none | filtered to one member's assigned tasks, scoped to that member's own group automatically — use for a "my tasks" screen |
+| `addTask` / `deleteTask` / `reviewTask` | Mutation | **user** | scoped to the caller's group; `createdBy`/`reviewedBy` come from the session, not client input |
 | `editTask` / `submitTask` | Mutation | none | member actions; `memberUuid` is self-declared |
 
-"Auth required: user" means `graphqlRequest` needs an active Supabase session (it attaches the token automatically per §3).
+"Auth required: user" means `graphqlRequest` needs an active Supabase session (it attaches the token automatically per §3). See the "Groups" section above for how `groupId` scoping actually works — it's not something you manage per-request for signed-in users, only for the three unauthenticated catalog queries.
 
 **Client → Service → Task flow to build the UI around:** a service must exist in the `services` catalog before a client can avail it, and a task's `serviceId` must be one of the *specific client's* `servicesAvailed` — not just any service in the catalog. So the "add task" form should fetch the selected client's `servicesAvailed`, cross-reference against `services` for display names, and only offer those as options.
 
@@ -306,12 +335,40 @@ export interface Task {
 
 All of these are plain GraphQL query/mutation strings — pass them straight into `graphqlRequest` from §3.
 
+### Groups
+
+Call `MY_GROUP` right after a user signs in. If it returns `null`, show an onboarding screen with two options — "Create a new group" or "Join an existing one" — before letting them into the rest of the app (every other user-authenticated query/mutation will fail with `NO_GROUP` until one of these succeeds).
+
+```ts
+const MY_GROUP = `
+  query MyGroup {
+    myGroup { groupId joinCode }
+  }
+`;
+
+const CREATE_GROUP = `
+  mutation CreateGroup {
+    createGroup { groupId joinCode }
+  }
+`;
+// Show the returned joinCode prominently after creating — that's what you hand
+// to teammates so they can join this same group.
+
+const JOIN_GROUP = `
+  mutation JoinGroup($joinCode: String!) {
+    joinGroup(joinCode: $joinCode) { groupId joinCode }
+  }
+`;
+```
+
+There's no "leave group" or "regenerate code" mutation yet — a join code is permanent and reusable (anyone with it can join, repeatedly, at any time), so treat it like a shared invite link, not a one-time secret.
+
 ### Members
 
 ```ts
 const GET_MEMBERS = `
   query GetMembers {
-    members { uuid username email createdAt }
+    members { uuid username email groupId createdAt }
   }
 `;
 
@@ -319,10 +376,12 @@ const GET_MEMBERS = `
 // JWT (7-day expiry), NOT a Supabase session. Store it separately (e.g. its own
 // localStorage key) and don't pass it as the GraphQL Authorization header —
 // graphqlRequest (§3) only attaches the Supabase user session there.
+// member.groupId is what you pass into the services/departments/taskStatuses
+// groupId argument (§5) since a member has no session to derive it from.
 const LOGIN_MEMBER = `
   mutation LoginMember($email: String!, $password: String!) {
     loginMember(email: $email, password: $password) {
-      member { uuid username email createdAt }
+      member { uuid username email groupId createdAt }
       token
     }
   }
@@ -331,14 +390,14 @@ const LOGIN_MEMBER = `
 // Verify a stored member token is still valid / restore the member on app load
 const CURRENT_MEMBER = `
   query CurrentMember($token: String!) {
-    currentMember(token: $token) { uuid username email createdAt }
+    currentMember(token: $token) { uuid username email groupId createdAt }
   }
 `;
 
 const ADD_MEMBER = `
   mutation AddMember($username: String!, $email: String!, $password: String!) {
     addMember(username: $username, email: $email, password: $password) {
-      uuid username email createdAt
+      uuid username email groupId createdAt
     }
   }
 `;
@@ -352,7 +411,7 @@ const DELETE_MEMBER = `
 const EDIT_MEMBER_PROFILE = `
   mutation EditMemberProfile($uuid: ID!, $username: String, $email: String, $password: String) {
     editMemberProfile(uuid: $uuid, username: $username, email: $email, password: $password) {
-      uuid username email createdAt
+      uuid username email groupId createdAt
     }
   }
 `;
@@ -364,15 +423,17 @@ await graphqlRequest(ADD_MEMBER, { username: 'jane', email: 'jane@example.com', 
 ### Departments
 
 ```ts
+// Signed in as a user: omit groupId, your session's group is used automatically.
+// Signed in as a member (no session): pass groupId explicitly — from member.groupId (§4/§6).
 const GET_DEPARTMENTS = `
-  query GetDepartments {
-    departments { id name createdAt members { uuid username email assignedAt } }
+  query GetDepartments($groupId: ID) {
+    departments(groupId: $groupId) { id name groupId createdAt members { uuid username email assignedAt } }
   }
 `;
 
 const ADD_DEPARTMENT = `
   mutation AddDepartment($name: String!) {
-    addDepartment(name: $name) { id name createdAt members { uuid } }
+    addDepartment(name: $name) { id name groupId createdAt members { uuid } }
   }
 `;
 
@@ -396,21 +457,23 @@ const REMOVE_MEMBER_FROM_DEPARTMENT = `
 The catalog of services the business offers. Build the "add service" screen first — clients and tasks both depend on this list existing.
 
 ```ts
+// Signed in as a user: omit groupId. Signed in as a member (no session): pass
+// it explicitly from member.groupId (§4/§6).
 const GET_SERVICES = `
-  query GetServices {
-    services { id name }
+  query GetServices($groupId: ID) {
+    services(groupId: $groupId) { id name groupId }
   }
 `;
 
 const ADD_SERVICE = `
   mutation AddService($name: String!) {
-    addService(name: $name) { id name }
+    addService(name: $name) { id name groupId }
   }
 `;
 
 const UPDATE_SERVICE = `
   mutation UpdateService($serviceId: ID!, $name: String!) {
-    updateService(serviceId: $serviceId, name: $name) { id name }
+    updateService(serviceId: $serviceId, name: $name) { id name groupId }
   }
 `;
 
@@ -427,7 +490,7 @@ const DELETE_SERVICE = `
 const GET_CLIENTS = `
   query GetClients {
     clients {
-      id clientName businessName email whatsappNumber clientNotes servicesAvailed createdAt
+      id clientName businessName email whatsappNumber clientNotes servicesAvailed groupId createdAt
     }
   }
 `;
@@ -449,7 +512,7 @@ const ADD_CLIENT = `
       clientNotes: $clientNotes
       servicesAvailed: $servicesAvailed
     ) {
-      id clientName businessName email whatsappNumber clientNotes servicesAvailed
+      id clientName businessName email whatsappNumber clientNotes servicesAvailed groupId
     }
   }
 `;
@@ -479,7 +542,7 @@ const EDIT_CLIENT = `
       clientNotes: $clientNotes
       servicesAvailed: $servicesAvailed
     ) {
-      id clientName businessName email whatsappNumber clientNotes servicesAvailed
+      id clientName businessName email whatsappNumber clientNotes servicesAvailed groupId
     }
   }
 `;
@@ -501,21 +564,23 @@ const CLIENT_INQUIRY = `
 A user-managed catalog of task statuses — there's no fixed enum, your team defines whatever statuses make sense (e.g. "Pending", "On Going", "Blocked", "Done"). Build this screen before "add task", same as Services.
 
 ```ts
+// Signed in as a user: omit groupId. Signed in as a member (no session): pass
+// it explicitly from member.groupId (§4/§6).
 const GET_TASK_STATUSES = `
-  query GetTaskStatuses {
-    taskStatuses { id name }
+  query GetTaskStatuses($groupId: ID) {
+    taskStatuses(groupId: $groupId) { id name groupId }
   }
 `;
 
 const ADD_TASK_STATUS = `
   mutation AddTaskStatus($name: String!) {
-    addTaskStatus(name: $name) { id name }
+    addTaskStatus(name: $name) { id name groupId }
   }
 `;
 
 const UPDATE_TASK_STATUS = `
   mutation UpdateTaskStatus($taskStatusId: ID!, $name: String!) {
-    updateTaskStatus(taskStatusId: $taskStatusId, name: $name) { id name }
+    updateTaskStatus(taskStatusId: $taskStatusId, name: $name) { id name groupId }
   }
 `;
 
@@ -533,7 +598,7 @@ const GET_TASKS = `
   query GetTasks {
     tasks {
       id clientId clientName taskName taskDescription serviceId
-      assignedMembers dueDate createdBy priority statusId departmentId createdAt recurringTaskId
+      assignedMembers dueDate createdBy priority statusId departmentId groupId createdAt recurringTaskId
       submission { link note submittedBy submittedAt }
       revisions { id comment reviewedBy reviewedAt }
     }
@@ -545,7 +610,7 @@ const GET_TASKS_FOR_MEMBER = `
   query GetTasksForMember($memberUuid: ID!) {
     tasksForMember(memberUuid: $memberUuid) {
       id clientId clientName taskName taskDescription serviceId
-      assignedMembers dueDate createdBy priority statusId departmentId createdAt recurringTaskId
+      assignedMembers dueDate createdBy priority statusId departmentId groupId createdAt recurringTaskId
       submission { link note submittedBy submittedAt }
       revisions { id comment reviewedBy reviewedAt }
     }
@@ -577,7 +642,7 @@ const ADD_TASK = `
       statusId: $statusId
       departmentId: $departmentId
     ) {
-      id taskName statusId departmentId serviceId assignedMembers priority
+      id taskName statusId departmentId groupId serviceId assignedMembers priority
     }
   }
 `;
@@ -613,7 +678,7 @@ const EDIT_TASK = `
       statusId: $statusId
       departmentId: $departmentId
     ) {
-      id taskName taskDescription serviceId assignedMembers dueDate priority statusId departmentId
+      id taskName taskDescription serviceId assignedMembers dueDate priority statusId departmentId groupId
     }
   }
 `;

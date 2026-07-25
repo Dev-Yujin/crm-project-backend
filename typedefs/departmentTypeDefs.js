@@ -9,12 +9,13 @@ const departmentTypeDefs = `#graphql
   type Department {
     id: ID!
     name: String!
+    groupId: ID!
     createdAt: String
     members: [DepartmentMember!]!
   }
 
   type Query {
-    departments: [Department!]!
+    departments(groupId: ID): [Department!]!
   }
 
   type Mutation {

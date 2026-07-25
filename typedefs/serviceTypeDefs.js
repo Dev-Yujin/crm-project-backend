@@ -2,10 +2,11 @@ const serviceTypeDefs = `#graphql
   type Service {
     id: ID!
     name: String!
+    groupId: ID!
   }
 
   type Query {
-    services: [Service!]!
+    services(groupId: ID): [Service!]!
   }
 
   type Mutation {
