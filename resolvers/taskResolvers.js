@@ -4,7 +4,6 @@ import {
     addTask,
     deleteTask,
     editTask,
-    startTask,
     submitTask,
     reviewTask,
 } from '../models/task.js';
@@ -20,7 +19,6 @@ const mapSubmission = (submission) => submission && {
 const mapRevision = (revision) => ({
     id: revision.id,
     comment: revision.comment,
-    status: revision.status,
     reviewedBy: revision.reviewedBy,
     reviewedAt: revision.reviewedAt != null ? String(revision.reviewedAt) : null,
 });
@@ -36,7 +34,8 @@ const mapTask = (task) => task && {
     dueDate: task.dueDate ?? null,
     createdBy: task.createdBy ?? null,
     priority: task.priority,
-    status: task.status,
+    statusId: task.statusId ?? null,
+    departmentId: task.departmentId ?? null,
     createdAt: task.createdAt != null ? String(task.createdAt) : null,
     submission: mapSubmission(task.submission),
     revisions: (task.revisions ?? []).map(mapRevision),
@@ -55,9 +54,9 @@ const taskResolvers = {
         },
     },
     Mutation: {
-        addTask: async (_, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority }, context) => {
+        addTask: async (_, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId }, context) => {
             const user = requireUser(context);
-            const task = await addTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, user.id, priority);
+            const task = await addTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, user.id, priority, null, statusId, departmentId);
             return mapTask(task);
         },
         editTask: async (_, { taskId, ...updates }) => {
@@ -69,19 +68,15 @@ const taskResolvers = {
             const task = await deleteTask(taskId);
             return mapTask(task);
         },
-        // Member actions: no bearer auth (members have no login mechanism yet),
+        // Member action: no bearer auth (members have no login mechanism yet),
         // memberUuid is self-declared and checked against the task's assignedMembers
-        startTask: async (_, { taskId, memberUuid }) => {
-            const task = await startTask(taskId, memberUuid);
-            return mapTask(task);
-        },
         submitTask: async (_, { taskId, memberUuid, link, note }) => {
             const task = await submitTask(taskId, memberUuid, link, note);
             return mapTask(task);
         },
-        reviewTask: async (_, { taskId, comment, decision }, context) => {
+        reviewTask: async (_, { taskId, comment }, context) => {
             const user = requireUser(context);
-            const task = await reviewTask(taskId, user.id, comment, decision);
+            const task = await reviewTask(taskId, user.id, comment);
             return mapTask(task);
         },
     },

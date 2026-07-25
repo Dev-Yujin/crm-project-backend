@@ -1,17 +1,4 @@
 const taskTypeDefs = `#graphql
-  enum TaskStatus {
-    PENDING
-    IN_PROGRESS
-    SUBMITTED
-    FOR_REVISION
-    COMPLETED
-  }
-
-  enum ReviewDecision {
-    FOR_REVISION
-    COMPLETED
-  }
-
   enum TaskPriority {
     LOW
     MEDIUM
@@ -29,7 +16,6 @@ const taskTypeDefs = `#graphql
   type Revision {
     id: ID!
     comment: String!
-    status: TaskStatus!
     reviewedBy: ID!
     reviewedAt: String
   }
@@ -45,7 +31,8 @@ const taskTypeDefs = `#graphql
     dueDate: String
     createdBy: ID
     priority: TaskPriority!
-    status: TaskStatus!
+    statusId: ID
+    departmentId: ID
     createdAt: String
     submission: Submission
     revisions: [Revision!]!
@@ -67,6 +54,8 @@ const taskTypeDefs = `#graphql
       assignedMembers: [ID!]!
       dueDate: String
       priority: TaskPriority
+      statusId: ID
+      departmentId: ID
     ): Task!
     editTask(
       taskId: ID!
@@ -78,11 +67,12 @@ const taskTypeDefs = `#graphql
       assignedMembers: [ID!]
       dueDate: String
       priority: TaskPriority
+      statusId: ID
+      departmentId: ID
     ): Task!
     deleteTask(taskId: ID!): Task!
-    startTask(taskId: ID!, memberUuid: ID!): Task!
     submitTask(taskId: ID!, memberUuid: ID!, link: String!, note: String): Task!
-    reviewTask(taskId: ID!, comment: String!, decision: ReviewDecision!): Task!
+    reviewTask(taskId: ID!, comment: String!): Task!
   }
 `;
 

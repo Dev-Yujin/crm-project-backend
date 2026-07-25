@@ -1,16 +1,10 @@
 import { getDatabase, ref, push, set, get, remove, update, serverTimestamp } from "firebase/database";
 import { app } from "../config/firebase.js";
 import { pool } from "../config/supabase.js";
+import { validateTaskStatusExists } from "./taskStatuses.js";
+import { validateDepartmentExists } from "./departments.js";
 
 const db = getDatabase(app);
-
-export const TASK_STATUS = {
-    PENDING: "PENDING",
-    IN_PROGRESS: "IN_PROGRESS",
-    SUBMITTED: "SUBMITTED",
-    FOR_REVISION: "FOR_REVISION",
-    COMPLETED: "COMPLETED",
-};
 
 export const TASK_PRIORITY = {
     LOW: "LOW",
@@ -82,11 +76,14 @@ export const getTasksForMember = async (memberUuid) => {
 };
 
 //Add a new task (created by a user, assigned to one or more members, tied to one of the client's availed services)
+//statusId is optional and freely chosen from the user-managed task status catalog — there is no fixed workflow
 //recurringTaskId is set internally when a recurring task template generates an instance — not exposed on the public addTask mutation
-export const addTask = async (clientId, clientName, taskName, taskDescription, serviceId, assignedMembers = [], dueDate = null, createdBy, priority = TASK_PRIORITY.MEDIUM, recurringTaskId = null) => {
+export const addTask = async (clientId, clientName, taskName, taskDescription, serviceId, assignedMembers = [], dueDate = null, createdBy, priority = TASK_PRIORITY.MEDIUM, recurringTaskId = null, statusId = null, departmentId = null) => {
     try {
         await validateMembersExist(assignedMembers);
         await validateServiceForClient(clientId, serviceId);
+        await validateTaskStatusExists(statusId);
+        await validateDepartmentExists(departmentId);
 
         const tasksRef = ref(db, "tasks");
         const newTaskRef = push(tasksRef);
@@ -101,7 +98,8 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
             createdBy,
             priority,
             recurringTaskId,
-            status: TASK_STATUS.PENDING,
+            statusId,
+            departmentId,
             createdAt: serverTimestamp(),
         });
 
@@ -117,7 +115,8 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
             createdBy,
             priority,
             recurringTaskId,
-            status: TASK_STATUS.PENDING,
+            statusId,
+            departmentId,
             revisions: [],
         };
     } catch (error) {
@@ -144,8 +143,8 @@ export const deleteTask = async (taskId) => {
     }
 };
 
-//Edit a task's details (not its status/review data) by its ID
-export const editTask = async (taskId, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority } = {}) => {
+//Edit a task's details, including freely setting its statusId — there is no fixed workflow gating this
+export const editTask = async (taskId, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId } = {}) => {
     try {
         const taskRef = ref(db, `tasks/${taskId}`);
         const taskSnapshot = await get(taskRef);
@@ -167,6 +166,14 @@ export const editTask = async (taskId, { clientId, clientName, taskName, taskDes
             );
         }
 
+        if (statusId !== undefined) {
+            await validateTaskStatusExists(statusId);
+        }
+
+        if (departmentId !== undefined) {
+            await validateDepartmentExists(departmentId);
+        }
+
         const updatedTaskData = {
             ...(clientId !== undefined && { clientId }),
             ...(clientName !== undefined && { clientName }),
@@ -176,6 +183,8 @@ export const editTask = async (taskId, { clientId, clientName, taskName, taskDes
             ...(assignedMembers !== undefined && { assignedMembers }),
             ...(dueDate !== undefined && { dueDate }),
             ...(priority !== undefined && { priority }),
+            ...(statusId !== undefined && { statusId }),
+            ...(departmentId !== undefined && { departmentId }),
         };
 
         const finalData = { ...task, ...updatedTaskData };
@@ -188,41 +197,7 @@ export const editTask = async (taskId, { clientId, clientName, taskName, taskDes
     }
 };
 
-//A member marks a task as started, moving it from PENDING into IN_PROGRESS
-export const startTask = async (taskId, memberUuid) => {
-    try {
-        const taskRef = ref(db, `tasks/${taskId}`);
-        const taskSnapshot = await get(taskRef);
-
-        if (!taskSnapshot.exists()) {
-            throw new Error("Task not found");
-        }
-
-        const task = taskSnapshot.val();
-
-        if (!(task.assignedMembers ?? []).includes(memberUuid)) {
-            throw new Error("This member is not assigned to this task");
-        }
-
-        if (task.status !== TASK_STATUS.PENDING) {
-            throw new Error(`Task cannot be started while status is ${task.status}`);
-        }
-
-        await update(taskRef, { status: TASK_STATUS.IN_PROGRESS });
-
-        return {
-            id: taskId,
-            ...task,
-            status: TASK_STATUS.IN_PROGRESS,
-            revisions: mapRevisions(task.revisions),
-        };
-    } catch (error) {
-        console.error("Error starting task:", error);
-        throw error;
-    }
-};
-
-//A member submits (or resubmits, after a revision request) their work on a task
+//A member records their submitted work on a task (link + optional note). Callable anytime by an assigned member — not gated by status.
 export const submitTask = async (taskId, memberUuid, link, note = null) => {
     try {
         const taskRef = ref(db, `tasks/${taskId}`);
@@ -238,24 +213,18 @@ export const submitTask = async (taskId, memberUuid, link, note = null) => {
             throw new Error("This member is not assigned to this task");
         }
 
-        if (task.status !== TASK_STATUS.IN_PROGRESS && task.status !== TASK_STATUS.FOR_REVISION) {
-            throw new Error(`Task cannot be submitted while status is ${task.status}`);
-        }
+        const submission = {
+            link,
+            note,
+            submittedBy: memberUuid,
+            submittedAt: serverTimestamp(),
+        };
 
-        await update(taskRef, {
-            status: TASK_STATUS.SUBMITTED,
-            submission: {
-                link,
-                note,
-                submittedBy: memberUuid,
-                submittedAt: serverTimestamp(),
-            },
-        });
+        await update(taskRef, { submission });
 
         return {
             id: taskId,
             ...task,
-            status: TASK_STATUS.SUBMITTED,
             revisions: mapRevisions(task.revisions),
             submission: { link, note, submittedBy: memberUuid, submittedAt: null },
         };
@@ -265,13 +234,9 @@ export const submitTask = async (taskId, memberUuid, link, note = null) => {
     }
 };
 
-//A user reviews a submitted task, leaving a comment and deciding the next status
-export const reviewTask = async (taskId, reviewedBy, comment, decision) => {
+//A user leaves a review comment on a task, logged to its revision history. Callable anytime — not gated by status.
+export const reviewTask = async (taskId, reviewedBy, comment) => {
     try {
-        if (decision !== TASK_STATUS.FOR_REVISION && decision !== TASK_STATUS.COMPLETED) {
-            throw new Error('Decision must be "FOR_REVISION" or "COMPLETED"');
-        }
-
         const taskRef = ref(db, `tasks/${taskId}`);
         const taskSnapshot = await get(taskRef);
 
@@ -281,27 +246,20 @@ export const reviewTask = async (taskId, reviewedBy, comment, decision) => {
 
         const task = taskSnapshot.val();
 
-        if (task.status !== TASK_STATUS.SUBMITTED) {
-            throw new Error("Only a submitted task can be reviewed");
-        }
-
         const revisionsRef = ref(db, `tasks/${taskId}/revisions`);
         const newRevisionRef = push(revisionsRef);
         await set(newRevisionRef, {
             comment,
-            status: decision,
             reviewedBy,
             reviewedAt: serverTimestamp(),
         });
-        await update(taskRef, { status: decision });
 
         return {
             id: taskId,
             ...task,
-            status: decision,
             revisions: [
                 ...mapRevisions(task.revisions),
-                { id: newRevisionRef.key, comment, status: decision, reviewedBy, reviewedAt: null },
+                { id: newRevisionRef.key, comment, reviewedBy, reviewedAt: null },
             ],
         };
     } catch (error) {

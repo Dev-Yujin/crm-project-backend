@@ -3,7 +3,7 @@
 This backend exposes a single GraphQL endpoint (Apollo Server) at `http://<ip>:<port>/`, backed by:
 - **Supabase Auth** — sign up / login / Google OAuth for **users** (staff/admin accounts)
 - **Postgres (Supabase pooler)** — `members` table (CRM staff added by users)
-- **Firebase Realtime Database** — `departments`, `services`, `clients`, `tasks`
+- **Firebase Realtime Database** — `departments`, `services`, `taskStatuses`, `clients`, `tasks`
 
 No GraphQL client library is used here — just plain `fetch()` POSTs against the URL/port. The only package you need is `@supabase/supabase-js`, for Google Sign In/Sign Up.
 
@@ -224,9 +224,13 @@ export interface Client {
   createdAt: string | null;
 }
 
+// --- Task Status --- (user-defined, e.g. "Pending", "On Going", "Done" — no fixed workflow)
+export interface TaskStatus {
+  id: string;
+  name: string;
+}
+
 // --- Task ---
-export type TaskStatus = 'PENDING' | 'IN_PROGRESS' | 'SUBMITTED' | 'FOR_REVISION' | 'COMPLETED';
-export type ReviewDecision = 'FOR_REVISION' | 'COMPLETED';
 export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
 
 export interface Submission {
@@ -238,7 +242,6 @@ export interface Submission {
 export interface Revision {
   id: string;
   comment: string;
-  status: TaskStatus;
   reviewedBy: string; // user id
   reviewedAt: string | null;
 }
@@ -253,7 +256,8 @@ export interface Task {
   dueDate: string | null;
   createdBy: string | null; // user id
   priority: TaskPriority;
-  status: TaskStatus; // driven by startTask/submitTask/reviewTask — not directly settable via editTask
+  statusId: string | null; // freely settable, references the TaskStatus catalog — no fixed workflow or gating
+  departmentId: string | null; // optional, references the Department catalog — purely informational, not validated against assignedMembers
   createdAt: string | null;
   submission: Submission | null;
   revisions: Revision[];
@@ -282,16 +286,19 @@ export interface Task {
 | `clients` | Query | **user** | client records are treated as sensitive |
 | `addClient` / `deleteClient` / `editClient` | Mutation | **user** | `servicesAvailed` must be IDs that exist in the `services` catalog |
 | `clientInquiry` | Mutation | none | public — submitted by a prospect with no account |
+| `taskStatuses` | Query | none | public catalog of user-defined task statuses (e.g. "Pending", "On Going", "Done") |
+| `addTaskStatus` / `updateTaskStatus` / `deleteTaskStatus` | Mutation | **user** | same non-cascading caveat as services — deleting one in use leaves a dangling `statusId` on any task referencing it |
+| `addTask` / `editTask` `departmentId` arg | Mutation arg | **user** | optional; must reference an existing `Department`. Same non-cascading caveat — deleting a department in use leaves a dangling `departmentId` on any task referencing it. Purely informational (e.g. "this task belongs to the Video Editing dept.") — it is **not** validated against `assignedMembers`, so a task can be tagged to a department none of its assignees belong to |
 | `tasks` | Query | none | all tasks; members need to read this without login |
 | `tasksForMember(memberUuid)` | Query | none | filtered to one member's assigned tasks — use for a "my tasks" screen |
 | `addTask` / `deleteTask` / `reviewTask` | Mutation | **user** | `createdBy`/`reviewedBy` come from the session, not client input |
-| `editTask` / `startTask` / `submitTask` | Mutation | none | member actions; `memberUuid` is self-declared |
+| `editTask` / `submitTask` | Mutation | none | member actions; `memberUuid` is self-declared |
 
 "Auth required: user" means `graphqlRequest` needs an active Supabase session (it attaches the token automatically per §3).
 
 **Client → Service → Task flow to build the UI around:** a service must exist in the `services` catalog before a client can avail it, and a task's `serviceId` must be one of the *specific client's* `servicesAvailed` — not just any service in the catalog. So the "add task" form should fetch the selected client's `servicesAvailed`, cross-reference against `services` for display names, and only offer those as options.
 
-**`status` is not directly settable.** It's driven entirely by `startTask`/`submitTask`/`reviewTask` — see the flow diagram in the Tasks section below.
+**There is no fixed task workflow.** `statusId` is freely settable via `addTask`/`editTask`, referencing whatever statuses your team has defined in the `taskStatuses` catalog (build that screen first). `submitTask` (member records a link/note) and `reviewTask` (user leaves a comment) are independent actions — neither one changes `statusId` automatically, and neither is gated by the task's current status. If you want submitting/reviewing to *also* move the status (e.g. to a "Submitted" or "Done" status), call `editTask` with the relevant `statusId` alongside/after those calls — the backend won't do it for you.
 
 ---
 
@@ -489,6 +496,36 @@ const CLIENT_INQUIRY = `
 
 `servicesAvailed` on the add/edit client form should be a multi-select populated from `GET_SERVICES`, sending back the chosen service **IDs** — free-typed values will be rejected since the backend validates every ID exists in the catalog.
 
+### Task Statuses
+
+A user-managed catalog of task statuses — there's no fixed enum, your team defines whatever statuses make sense (e.g. "Pending", "On Going", "Blocked", "Done"). Build this screen before "add task", same as Services.
+
+```ts
+const GET_TASK_STATUSES = `
+  query GetTaskStatuses {
+    taskStatuses { id name }
+  }
+`;
+
+const ADD_TASK_STATUS = `
+  mutation AddTaskStatus($name: String!) {
+    addTaskStatus(name: $name) { id name }
+  }
+`;
+
+const UPDATE_TASK_STATUS = `
+  mutation UpdateTaskStatus($taskStatusId: ID!, $name: String!) {
+    updateTaskStatus(taskStatusId: $taskStatusId, name: $name) { id name }
+  }
+`;
+
+const DELETE_TASK_STATUS = `
+  mutation DeleteTaskStatus($taskStatusId: ID!) {
+    deleteTaskStatus(taskStatusId: $taskStatusId) { id name }
+  }
+`;
+```
+
 ### Tasks
 
 ```ts
@@ -496,9 +533,9 @@ const GET_TASKS = `
   query GetTasks {
     tasks {
       id clientId clientName taskName taskDescription serviceId
-      assignedMembers dueDate createdBy priority status createdAt recurringTaskId
+      assignedMembers dueDate createdBy priority statusId departmentId createdAt recurringTaskId
       submission { link note submittedBy submittedAt }
-      revisions { id comment status reviewedBy reviewedAt }
+      revisions { id comment reviewedBy reviewedAt }
     }
   }
 `;
@@ -508,9 +545,9 @@ const GET_TASKS_FOR_MEMBER = `
   query GetTasksForMember($memberUuid: ID!) {
     tasksForMember(memberUuid: $memberUuid) {
       id clientId clientName taskName taskDescription serviceId
-      assignedMembers dueDate createdBy priority status createdAt recurringTaskId
+      assignedMembers dueDate createdBy priority statusId departmentId createdAt recurringTaskId
       submission { link note submittedBy submittedAt }
-      revisions { id comment status reviewedBy reviewedAt }
+      revisions { id comment reviewedBy reviewedAt }
     }
   }
 `;
@@ -525,6 +562,8 @@ const ADD_TASK = `
     $assignedMembers: [ID!]!
     $dueDate: String
     $priority: TaskPriority
+    $statusId: ID
+    $departmentId: ID
   ) {
     addTask(
       clientId: $clientId
@@ -535,13 +574,17 @@ const ADD_TASK = `
       assignedMembers: $assignedMembers
       dueDate: $dueDate
       priority: $priority
+      statusId: $statusId
+      departmentId: $departmentId
     ) {
-      id taskName status serviceId assignedMembers priority
+      id taskName statusId departmentId serviceId assignedMembers priority
     }
   }
 `;
 // priority defaults to MEDIUM if omitted. serviceId must be one of the
 // selected client's servicesAvailed (see the flow note above the table in §5).
+// statusId is optional and, if provided, must reference an existing entry in the taskStatuses catalog.
+// departmentId is optional and, if provided, must reference an existing entry in the departments catalog.
 
 const EDIT_TASK = `
   mutation EditTask(
@@ -554,6 +597,8 @@ const EDIT_TASK = `
     $assignedMembers: [ID!]
     $dueDate: String
     $priority: TaskPriority
+    $statusId: ID
+    $departmentId: ID
   ) {
     editTask(
       taskId: $taskId
@@ -565,11 +610,17 @@ const EDIT_TASK = `
       assignedMembers: $assignedMembers
       dueDate: $dueDate
       priority: $priority
+      statusId: $statusId
+      departmentId: $departmentId
     ) {
-      id taskName taskDescription serviceId assignedMembers dueDate priority
+      id taskName taskDescription serviceId assignedMembers dueDate priority statusId departmentId
     }
   }
 `;
+// This is how you change a task's status — pass whichever taskStatuses.id the
+// user picked. There's no dedicated "set status" mutation; it's just a field edit.
+// Same pattern for department — pass whichever departments.id it belongs to, or
+// null to clear it. Not validated against assignedMembers.
 
 const DELETE_TASK = `
   mutation DeleteTask($taskId: ID!) {
@@ -577,47 +628,32 @@ const DELETE_TASK = `
   }
 `;
 
-// Member marks a task as started; only valid while status is PENDING
-const START_TASK = `
-  mutation StartTask($taskId: ID!, $memberUuid: ID!) {
-    startTask(taskId: $taskId, memberUuid: $memberUuid) {
-      id status
-    }
-  }
-`;
-
-// Member submits/resubmits their work; memberUuid must be in the task's assignedMembers
+// Member records/updates their submitted work; memberUuid must be in the task's
+// assignedMembers. Callable anytime, any number of times — not gated by status,
+// and doesn't change statusId itself.
 const SUBMIT_TASK = `
   mutation SubmitTask($taskId: ID!, $memberUuid: ID!, $link: String!, $note: String) {
     submitTask(taskId: $taskId, memberUuid: $memberUuid, link: $link, note: $note) {
-      id status submission { link note submittedBy submittedAt }
+      id submission { link note submittedBy submittedAt }
     }
   }
 `;
 
-// User reviews a SUBMITTED task; decision is FOR_REVISION or COMPLETED
-// Only callable when status is currently SUBMITTED
+// User leaves a review comment, logged to the task's revision history.
+// Callable anytime — not gated by status, and doesn't change statusId itself.
 const REVIEW_TASK = `
-  mutation ReviewTask($taskId: ID!, $comment: String!, $decision: ReviewDecision!) {
-    reviewTask(taskId: $taskId, comment: $comment, decision: $decision) {
-      id status
-      revisions { id comment status reviewedBy reviewedAt }
+  mutation ReviewTask($taskId: ID!, $comment: String!) {
+    reviewTask(taskId: $taskId, comment: $comment) {
+      id
+      revisions { id comment reviewedBy reviewedAt }
     }
   }
 `;
 ```
 
-**Task status flow to build the UI around:**
+**There's no status flow diagram** — that's the point. `submitTask` and `reviewTask` just record data (a submission, a review comment); they don't touch `statusId`. If your UI wants "submitting moves it to a Submitted status" or "reviewing moves it to Done", make that an explicit second call to `EDIT_TASK` with the chosen `statusId` right after `SUBMIT_TASK`/`REVIEW_TASK` — the backend has no opinion on what that mapping should be.
 
-```
-PENDING --startTask--> IN_PROGRESS --submitTask--> SUBMITTED --reviewTask(FOR_REVISION)--> FOR_REVISION --submitTask--> SUBMITTED
-                                                        |
-                                                        +--reviewTask(COMPLETED)--> COMPLETED (terminal)
-```
-- `startTask` fails unless status is currently `PENDING` — it's a one-way "I've begun work" marker, not repeatable.
-- `submitTask` only works while status is `IN_PROGRESS` or `FOR_REVISION` — a task must be started before it can be submitted the first time, but resubmitting after a revision request doesn't require starting again.
-- `reviewTask` fails unless status is currently `SUBMITTED`.
-- Every `reviewTask` call appends to `revisions` — render that as the audit trail / comment thread on the task detail view.
+`revisions` is still the audit trail / comment thread for the task detail view — every `reviewTask` call appends one entry, it just no longer carries a status value.
 
 ### Users (optional — see §2 for the recommended Google/email flows instead)
 
