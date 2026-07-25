@@ -4,7 +4,7 @@ This is a separate doc from [FRONTEND_INTEGRATION.md](./FRONTEND_INTEGRATION.md)
 
 ## How it works
 
-A **RecurringTask** is a template: client, task details, service, assigned members, and a `recurrence` (`DAILY` / `WEEKLY` / `MONTHLY`). It does **not** show up in task lists itself — instead, the backend has an hourly scheduler that checks every active template and, when one is due, generates a normal `Task` instance for it (via the same `addTask` logic used elsewhere). That generated task goes through the exact same review workflow already documented in `FRONTEND_INTEGRATION.md` (`PENDING → SUBMITTED → FOR_REVISION/COMPLETED`, `submitTask`, `reviewTask`, etc.) — nothing new to learn there.
+A **RecurringTask** is a template: client, task details, service, assigned members, and a `recurrence` (`DAILY` / `WEEKLY` / `MONTHLY`). It does **not** show up in task lists itself — instead, the backend has an hourly scheduler that checks every active template and, when one is due, generates a normal `Task` instance for it (via the same `addTask` logic used elsewhere). That generated task is a plain `Task` — same free-form `statusId` (from the `taskStatuses` catalog), same `submitTask`/`reviewTask` behavior already documented in `FRONTEND_INTEGRATION.md` — nothing new to learn there.
 
 ```
 RecurringTask template (DAILY/WEEKLY/MONTHLY)

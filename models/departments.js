@@ -72,6 +72,17 @@ export const removeMemberFromDepartment = async (departmentId, memberUuid) => {
     }
 };
 
+//No-op if departmentId is null, otherwise throws if it's not in the departments catalog
+export const validateDepartmentExists = async (departmentId) => {
+    if (departmentId == null) return;
+
+    const departmentSnapshot = await get(ref(db, `departments/${departmentId}`));
+
+    if (!departmentSnapshot.exists()) {
+        throw new Error("Department not found");
+    }
+};
+
 //Fetch all departments, along with their assigned members
 export const getAllDepartments = async () => {
     try {

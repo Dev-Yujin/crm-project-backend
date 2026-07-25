@@ -14,13 +14,15 @@ import serviceTypeDefs from './typedefs/serviceTypeDefs.js';
 import serviceResolvers from './resolvers/serviceResolvers.js';
 import recurringTaskTypeDefs from './typedefs/recurringTaskTypeDefs.js';
 import recurringTaskResolvers from './resolvers/recurringTaskResolvers.js';
+import taskStatusTypeDefs from './typedefs/taskStatusTypeDefs.js';
+import taskStatusResolvers from './resolvers/taskStatusResolvers.js';
 import { fetchCurrentUser } from './models/userFunctions.js';
 import { startScheduler } from './utils/scheduler.js';
 
 
 const server = new ApolloServer({
-  typeDefs:[userTypeDefs, memberTypeDefs, clientTypeDefs, taskTypeDefs, departmentTypeDefs, serviceTypeDefs, recurringTaskTypeDefs],
-  resolvers:[userResolvers, memberResolvers, clientResolvers, taskResolvers, departmentResolvers, serviceResolvers, recurringTaskResolvers],
+  typeDefs:[userTypeDefs, memberTypeDefs, clientTypeDefs, taskTypeDefs, departmentTypeDefs, serviceTypeDefs, recurringTaskTypeDefs, taskStatusTypeDefs],
+  resolvers:[userResolvers, memberResolvers, clientResolvers, taskResolvers, departmentResolvers, serviceResolvers, recurringTaskResolvers, taskStatusResolvers],
 });
 
 startScheduler();
