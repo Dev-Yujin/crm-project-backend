@@ -33,6 +33,7 @@ A user belongs to **exactly one** group at all times. `joinGroup` never fails wi
 | Operation | Type | Auth required | Notes |
 |---|---|---|---|
 | `myGroup` | Query | **user** | returns your current `{ groupId, joinCode }`. Every account has one from signup, so this should never return `null` in normal use |
+| `groupUsers` | Query | **user** | every **user** (Supabase Auth account — staff/admin, not a `Member`) who shares your group; scoped to your own group automatically |
 | `joinGroup(joinCode)` | Mutation | **user** | switches you into the code's group; only fails if the code is invalid |
 
 Send `Authorization: Bearer <session.access_token>` via `graphqlRequest` from §3 of the main doc, same as every other user-authenticated call.
@@ -46,6 +47,13 @@ export interface Group {
   groupId: string;
   joinCode: string; // share this with teammates so they can joinGroup with it
 }
+
+export interface GroupUser {
+  id: string;
+  email: string | null;
+  name: string | null; // from signup — null if they signed up without providing one (e.g. some Google accounts)
+  createdAt: string | null;
+}
 ```
 
 ## Operations
@@ -54,6 +62,14 @@ export interface Group {
 const MY_GROUP = `
   query MyGroup {
     myGroup { groupId joinCode }
+  }
+`;
+
+// Every user (staff/admin account) who shares your group — not Members (CRM staff
+// added via addMember). Use this for a "Team" screen listing who you work with.
+const GROUP_USERS = `
+  query GroupUsers {
+    groupUsers { id email name createdAt }
   }
 `;
 
@@ -71,6 +87,6 @@ There's no "leave group" or "regenerate code" mutation — a join code is perman
 
 ## Suggested UI
 
-- A **"Team" / "Settings → Group"** screen: call `MY_GROUP` and display the `joinCode` prominently (with a copy button) so the user can hand it to teammates.
+- A **"Team" / "Settings → Group"** screen: call `MY_GROUP` and display the `joinCode` prominently (with a copy button) so the user can hand it to teammates, and call `GROUP_USERS` to list everyone currently sharing that group.
 - A **"Join a team"** input (join code field + submit button) somewhere reachable early — ideally right after first sign-in, before the user has created any real clients/tasks, since joining later abandons whatever they'd already built under their own auto-created group.
 - Nothing to build for "create a group" — it already happened by the time the user is looking at your app.

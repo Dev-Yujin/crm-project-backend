@@ -4,8 +4,16 @@ const groupTypeDefs = `#graphql
     joinCode: String!
   }
 
+  type GroupUser {
+    id: ID!
+    email: String
+    name: String
+    createdAt: String
+  }
+
   type Query {
     myGroup: Group
+    groupUsers: [GroupUser!]!
   }
 
   type Mutation {

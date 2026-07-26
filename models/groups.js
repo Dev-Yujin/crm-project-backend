@@ -28,6 +28,20 @@ export const joinGroupByCode = async (userId, joinCode) => {
     return { groupId: updateResult.rows[0].groupId, joinCode: updateResult.rows[0].join_code };
 };
 
+//Fetch every user (Supabase Auth account) that belongs to a given group
+export const getGroupUsers = async (groupId) => {
+    const result = await pool.query(
+        `SELECT u.id, u.email, u.raw_user_meta_data->>'name' AS name, u.created_at
+         FROM groups g
+         JOIN auth.users u ON u.id = g."userId"
+         WHERE g."groupId" = $1
+         ORDER BY u.created_at`,
+        [groupId]
+    );
+
+    return result.rows;
+};
+
 //Fetch the current user's group + shareable join code
 export const getMyGroup = async (userId) => {
     const result = await pool.query('SELECT "groupId", join_code FROM groups WHERE "userId" = $1 LIMIT 1', [userId]);
