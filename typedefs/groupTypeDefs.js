@@ -9,7 +9,6 @@ const groupTypeDefs = `#graphql
   }
 
   type Mutation {
-    createGroup: Group!
     joinGroup(joinCode: String!): Group!
   }
 `;

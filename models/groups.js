@@ -1,54 +1,13 @@
-import { randomUUID, randomBytes } from "node:crypto";
 import { pool } from "../config/supabase.js";
-import { fetchUserGroupId } from "../utils/groups.js";
 
-//Avoids visually-confusable characters (0/O, 1/I/L)
-const CODE_CHARS = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+//Group creation is now automatic: a Postgres trigger (`on_auth_user_created_group` on auth.users,
+//function `handle_new_user_group`) inserts a fresh group + join code for every new Supabase Auth
+//user, regardless of how they signed up (email/password via registerUser, Google OAuth direct from
+//the frontend, etc.) — this file only has to handle joining/reading a group, never creating one.
 
-const generateJoinCode = () => {
-    const bytes = randomBytes(8);
-    let code = "";
-    for (const byte of bytes) {
-        code += CODE_CHARS[byte % CODE_CHARS.length];
-    }
-    return code;
-};
-
-//Create a brand-new group for a user who doesn't have one yet, with a shareable join code
-export const createGroup = async (userId) => {
-    const existingGroupId = await fetchUserGroupId(userId);
-    if (existingGroupId) {
-        throw new Error("You already belong to a group");
-    }
-
-    const groupId = randomUUID();
-
-    for (let attempt = 0; attempt < 5; attempt++) {
-        const joinCode = generateJoinCode();
-        const existing = await pool.query("SELECT 1 FROM groups WHERE join_code = $1", [joinCode]);
-
-        if (existing.rows.length > 0) {
-            continue;
-        }
-
-        await pool.query(
-            'INSERT INTO groups ("groupId", "userId", join_code) VALUES ($1, $2, $3)',
-            [groupId, userId, joinCode]
-        );
-
-        return { groupId, joinCode };
-    }
-
-    throw new Error("Could not generate a unique join code, please try again");
-};
-
-//Join an existing group using its join code
+//Join an existing group using its join code — moves the user's own row to that group
+//(every user already has exactly one row, auto-created at signup)
 export const joinGroupByCode = async (userId, joinCode) => {
-    const existingGroupId = await fetchUserGroupId(userId);
-    if (existingGroupId) {
-        throw new Error("You already belong to a group");
-    }
-
     const result = await pool.query('SELECT "groupId" FROM groups WHERE join_code = $1 LIMIT 1', [joinCode]);
 
     if (result.rows.length === 0) {
@@ -57,12 +16,16 @@ export const joinGroupByCode = async (userId, joinCode) => {
 
     const { groupId } = result.rows[0];
 
-    await pool.query(
-        'INSERT INTO groups ("groupId", "userId", join_code) VALUES ($1, $2, $3)',
-        [groupId, userId, joinCode]
+    const updateResult = await pool.query(
+        'UPDATE groups SET "groupId" = $1, join_code = $2 WHERE "userId" = $3 RETURNING "groupId", join_code',
+        [groupId, joinCode, userId]
     );
 
-    return { groupId, joinCode };
+    if (updateResult.rows.length === 0) {
+        throw new Error("User not found");
+    }
+
+    return { groupId: updateResult.rows[0].groupId, joinCode: updateResult.rows[0].join_code };
 };
 
 //Fetch the current user's group + shareable join code

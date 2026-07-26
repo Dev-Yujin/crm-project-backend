@@ -20,6 +20,8 @@ const departmentTypeDefs = `#graphql
 
   type Mutation {
     addDepartment(name: String!): Department!
+    updateDepartment(departmentId: ID!, name: String!): Department!
+    deleteDepartment(departmentId: ID!): Department!
     addMemberToDepartment(departmentId: ID!, memberUuid: ID!): DepartmentMember!
     removeMemberFromDepartment(departmentId: ID!, memberUuid: ID!): Boolean!
   }

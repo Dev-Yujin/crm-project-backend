@@ -9,20 +9,13 @@ No GraphQL client library is used here — just plain `fetch()` POSTs against th
 
 Daily/weekly/monthly recurring tasks are a separate feature layered on top of `Task` — see [RECURRING_TASKS_INTEGRATION.md](./RECURRING_TASKS_INTEGRATION.md).
 
+How multi-tenant data isolation ("groups") works, and how a user joins a teammate's group, is also a separate doc — see [GROUPS_INTEGRATION.md](./GROUPS_INTEGRATION.md). The short version, since it affects auth on almost everything below: every account automatically belongs to exactly one **group** the moment it's created (no setup step needed), every piece of data (`clients`, `tasks`, `members`, `departments`, `services`, `taskStatuses`, `recurringTasks`) belongs to exactly one group, and a signed-in user only ever sees their own group's data — groupId is always derived server-side from their session, never passed as an argument.
+
 There are two actors in this system:
 - **user** — a Supabase Auth account (owns login, Google sign-in). Required for all create/delete/review/management mutations.
-- **member** — a row in the `members` table, added by a user. Members currently have **no login/session mechanism**, so member-facing mutations (`submitTask`, `editTask`) are unauthenticated and take a `memberUuid` argument directly.
+- **member** — a row in the `members` table, added by a user. Members currently have **no login/session mechanism**, so member-facing mutations (`submitTask`, `editTask`) are unauthenticated and take a `memberUuid` argument directly. A member inherits their group automatically from whoever added them (`addMember` stamps the creating user's group onto the new member).
 
-### Groups (multi-tenant data isolation)
-
-Every piece of data — `clients`, `tasks`, `members`, `departments`, `services`, `taskStatuses`, `recurringTasks` — belongs to exactly one **group**, and every operation is scoped to a single group. This is what keeps one team's data invisible to another.
-
-- A brand-new signed-in user with no group yet calls `createGroup` to spin up their own group, or `joinGroup(joinCode)` to join a teammate's existing group using a code they shared. Your Supabase Auth session doesn't carry a groupId itself — the backend looks it up server-side from the `groups` table on every authenticated request.
-- **If your signed-in user has no group assigned yet, every group-scoped query/mutation fails** with a GraphQL error where `extensions.code === 'NO_GROUP'` ("Your account is not assigned to a group yet. Contact an admin."). This is the trigger for showing an onboarding screen: "Create a group" / "Join with a code" — see §6 "Groups" below.
-- A single user belongs to **exactly one** group — `createGroup`/`joinGroup` both reject if you already belong to one.
-- A **member** inherits their group automatically from whoever added them (`addMember` stamps the creating user's group onto the new member) — a member always belongs to exactly one group, and you never set this yourself.
-- For a signed-in **user**, groupId is always derived server-side from their session — you never pass it as an argument, and if you did, it would be ignored (the backend never trusts a client-supplied groupId once it can authenticate you).
-- The three **public catalog queries** members rely on without logging in — `services`, `departments`, `taskStatuses` — are the exception: since there's no session to derive a group from, they accept an optional `groupId` argument. A member gets their own `groupId` from `loginMember`/`currentMember` (see §4/§6) and passes it along explicitly on every call. If you call one of these while signed in as a user, omit the argument — your session's group wins automatically.
+The three **public catalog queries** members rely on without logging in — `services`, `departments`, `taskStatuses` — are the one exception to "groupId is always server-derived": since there's no session to derive a group from, they accept an optional `groupId` argument. A member gets their own `groupId` from `loginMember`/`currentMember` (see §4/§6) and passes it along explicitly on every call. If you call one of these while signed in as a user, omit the argument — your session's group wins automatically.
 
 ---
 
@@ -161,26 +154,25 @@ It automatically grabs whatever Supabase session is active and attaches it as `A
 
 **Example usage:**
 ```ts
-const GET_MY_GROUP = `
-  query MyGroup {
-    myGroup { groupId joinCode }
+const GET_SERVICES = `
+  query GetServices {
+    services { id name }
   }
 `;
 
-const { myGroup } = await graphqlRequest<{ myGroup: Group | null }>(GET_MY_GROUP);
+const { services } = await graphqlRequest<{ services: Service[] }>(GET_SERVICES);
 ```
 
-**Error handling** — every mutation that requires a signed-in user throws a GraphQL error with `extensions.code === 'UNAUTHENTICATED'`. A signed-in user whose account has no group yet gets `extensions.code === 'NO_GROUP'` instead (see the "Groups" section above) — treat it as a distinct case, not a login failure. Since `graphqlRequest` above only surfaces `error.message`, check the raw response if you need the code:
+**Error handling** — every mutation that requires a signed-in user throws a GraphQL error with `extensions.code === 'UNAUTHENTICATED'`. Since `graphqlRequest` above only surfaces `error.message`, check the raw response if you need the code:
 ```ts
 const res = await fetch(GRAPHQL_URL, { /* ... */ });
 const json = await res.json();
 if (json.errors?.[0]?.extensions?.code === 'UNAUTHENTICATED') {
   // redirect to login
 }
-if (json.errors?.[0]?.extensions?.code === 'NO_GROUP') {
-  // signed in, but not assigned to a group yet — show "contact an admin", don't redirect to login
-}
 ```
+
+You may also see `extensions.code === 'NO_GROUP'` — this shouldn't happen for any normal signup (every account gets a group automatically, see "Groups" above), so treat it as a bug report rather than something to build a UI state around.
 
 ---
 
@@ -192,12 +184,6 @@ export interface User {
   id: string;
   email: string | null;
   name: string | null;
-}
-
-// --- Group ---
-export interface Group {
-  groupId: string;
-  joinCode: string; // share this with teammates so they can joinGroup with it
 }
 
 // --- Member ---
@@ -297,9 +283,7 @@ export interface Task {
 
 | Operation | Type | Auth required | Notes |
 |---|---|---|---|
-| `myGroup` | Query | **user** | returns `null` if not in a group yet (rather than throwing `NO_GROUP`) — use this one to check group status, not the other group-scoped queries |
-| `createGroup` | Mutation | **user** | fails if you already belong to a group |
-| `joinGroup(joinCode)` | Mutation | **user** | fails if the code is invalid, or if you already belong to a group |
+| `myGroup` / `joinGroup(joinCode)` | Query/Mutation | **user** | see [GROUPS_INTEGRATION.md](./GROUPS_INTEGRATION.md) |
 | `currentUser(accessToken)` | Query | none | pass a token explicitly, mostly for debugging |
 | `registerUser` / `loginUser` / `signInWithGoogle` | Mutation | none | prefer `supabase-js` directly (§2) instead |
 | `signOutUser` | Mutation | none | prefer `supabase.auth.signOut()` |
@@ -309,7 +293,8 @@ export interface Task {
 | `currentMember(token)` | Query | none | verify/restore a stored member token; also returns `groupId` |
 | `editMemberProfile` | Mutation | none | member editing their own profile; not yet tied to the login token — `uuid` is still a plain, unverified argument |
 | `departments(groupId)` | Query | none for members (`groupId` arg required) / **user** (`groupId` derived from session, arg ignored) | members need to read their own department without login |
-| `addDepartment` / `addMemberToDepartment` / `removeMemberFromDepartment` | Mutation | **user** | scoped to the caller's group; a member can currently belong to more than one department — nothing enforces exclusivity |
+| `addDepartment` / `updateDepartment` / `deleteDepartment` | Mutation | **user** | scoped to the caller's group; deleting a department in use by a task doesn't cascade — leaves a dangling `departmentId` |
+| `addMemberToDepartment` / `removeMemberFromDepartment` | Mutation | **user** | scoped to the caller's group; a member can currently belong to more than one department — nothing enforces exclusivity |
 | `services(groupId)` | Query | none for members (`groupId` arg required) / **user** (`groupId` derived from session, arg ignored) | public catalog (e.g. "Web Development", "Video Editing"), scoped per group |
 | `addService` / `updateService` / `deleteService` | Mutation | **user** | scoped to the caller's group; deleting a service in use by a client/task doesn't cascade — leaves a dangling ID |
 | `clients` | Query | **user** | client records are treated as sensitive; scoped to the caller's group |
@@ -334,34 +319,6 @@ export interface Task {
 ## 6. Operations reference
 
 All of these are plain GraphQL query/mutation strings — pass them straight into `graphqlRequest` from §3.
-
-### Groups
-
-Call `MY_GROUP` right after a user signs in. If it returns `null`, show an onboarding screen with two options — "Create a new group" or "Join an existing one" — before letting them into the rest of the app (every other user-authenticated query/mutation will fail with `NO_GROUP` until one of these succeeds).
-
-```ts
-const MY_GROUP = `
-  query MyGroup {
-    myGroup { groupId joinCode }
-  }
-`;
-
-const CREATE_GROUP = `
-  mutation CreateGroup {
-    createGroup { groupId joinCode }
-  }
-`;
-// Show the returned joinCode prominently after creating — that's what you hand
-// to teammates so they can join this same group.
-
-const JOIN_GROUP = `
-  mutation JoinGroup($joinCode: String!) {
-    joinGroup(joinCode: $joinCode) { groupId joinCode }
-  }
-`;
-```
-
-There's no "leave group" or "regenerate code" mutation yet — a join code is permanent and reusable (anyone with it can join, repeatedly, at any time), so treat it like a shared invite link, not a one-time secret.
 
 ### Members
 
@@ -434,6 +391,18 @@ const GET_DEPARTMENTS = `
 const ADD_DEPARTMENT = `
   mutation AddDepartment($name: String!) {
     addDepartment(name: $name) { id name groupId createdAt members { uuid } }
+  }
+`;
+
+const UPDATE_DEPARTMENT = `
+  mutation UpdateDepartment($departmentId: ID!, $name: String!) {
+    updateDepartment(departmentId: $departmentId, name: $name) { id name groupId }
+  }
+`;
+
+const DELETE_DEPARTMENT = `
+  mutation DeleteDepartment($departmentId: ID!) {
+    deleteDepartment(departmentId: $departmentId) { id name }
   }
 `;
 

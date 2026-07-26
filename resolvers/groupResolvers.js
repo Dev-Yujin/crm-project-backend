@@ -1,4 +1,4 @@
-import { createGroup, joinGroupByCode, getMyGroup } from '../models/groups.js';
+import { joinGroupByCode, getMyGroup } from '../models/groups.js';
 import { requireUser } from '../utils/requireUser.js';
 
 const groupResolvers = {
@@ -9,10 +9,6 @@ const groupResolvers = {
         },
     },
     Mutation: {
-        createGroup: async (_, __, context) => {
-            const user = requireUser(context);
-            return createGroup(user.id);
-        },
         joinGroup: async (_, { joinCode }, context) => {
             const user = requireUser(context);
             return joinGroupByCode(user.id, joinCode);

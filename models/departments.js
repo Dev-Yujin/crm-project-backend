@@ -1,9 +1,17 @@
-import { getDatabase, ref, push, set, get, remove, serverTimestamp } from "firebase/database";
+import { getDatabase, ref, push, set, get, remove, update, serverTimestamp } from "firebase/database";
 import { app } from "../config/firebase.js";
 import { pool } from "../config/supabase.js";
 //Create a Department, and assign members (from the Postgres members table) to that Department — scoped per group
 
 const db = getDatabase(app);
+
+const mapMembers = (members) =>
+    Object.entries(members ?? {}).map(([uuid, member]) => ({
+        uuid,
+        username: member.username,
+        email: member.email,
+        assignedAt: member.assignedAt,
+    }));
 
 //Add department function
 export const addDepartment = async (name, groupId) => {
@@ -19,6 +27,42 @@ export const addDepartment = async (name, groupId) => {
         return { id: newDepartmentRef.key, name, groupId };
     } catch (error) {
         console.error("Error adding department:", error);
+        throw error;
+    }
+};
+
+//Update a department's name (must belong to the caller's group)
+export const updateDepartment = async (departmentId, name, groupId) => {
+    try {
+        const departmentRef = ref(db, `departments/${departmentId}`);
+        const departmentSnapshot = await get(departmentRef);
+
+        if (!departmentSnapshot.exists() || departmentSnapshot.val().groupId !== groupId) {
+            throw new Error("Department not found");
+        }
+
+        await update(departmentRef, { name });
+        return { id: departmentId, ...departmentSnapshot.val(), name, members: mapMembers(departmentSnapshot.val().members) };
+    } catch (error) {
+        console.error("Error updating department:", error);
+        throw error;
+    }
+};
+
+//Delete a department (must belong to the caller's group)
+export const deleteDepartment = async (departmentId, groupId) => {
+    try {
+        const departmentRef = ref(db, `departments/${departmentId}`);
+        const departmentSnapshot = await get(departmentRef);
+
+        if (!departmentSnapshot.exists() || departmentSnapshot.val().groupId !== groupId) {
+            throw new Error("Department not found");
+        }
+
+        await remove(departmentRef);
+        return { id: departmentId, ...departmentSnapshot.val(), members: mapMembers(departmentSnapshot.val().members) };
+    } catch (error) {
+        console.error("Error deleting department:", error);
         throw error;
     }
 };
@@ -96,12 +140,7 @@ export const getAllDepartments = async (groupId) => {
                 name: department.name,
                 groupId: department.groupId,
                 createdAt: department.createdAt,
-                members: Object.entries(department.members ?? {}).map(([uuid, member]) => ({
-                    uuid,
-                    username: member.username,
-                    email: member.email,
-                    assignedAt: member.assignedAt,
-                })),
+                members: mapMembers(department.members),
             }));
     } catch (error) {
         console.error("Error fetching departments:", error);
