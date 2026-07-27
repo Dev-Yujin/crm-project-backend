@@ -148,17 +148,20 @@ export const deleteTask = async (taskId, groupId) => {
     }
 };
 
-//Edit a task's details, including freely setting its statusId — there is no fixed workflow gating this. Must belong to the caller's group.
-export const editTask = async (taskId, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId } = {}, groupId) => {
+//Edit a task's details, including freely setting its statusId — there is no fixed workflow gating this.
+//This is a member action (no bearer auth) same as submitTask, so there's no caller-supplied groupId to check
+//against — the task's own stored groupId is used to scope any cross-reference validation instead.
+export const editTask = async (taskId, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId } = {}) => {
     try {
         const taskRef = ref(db, `tasks/${taskId}`);
         const taskSnapshot = await get(taskRef);
 
-        if (!taskSnapshot.exists() || taskSnapshot.val().groupId !== groupId) {
+        if (!taskSnapshot.exists()) {
             throw new Error("Task not found");
         }
 
         const task = taskSnapshot.val();
+        const groupId = task.groupId;
 
         if (assignedMembers !== undefined) {
             await validateMembersExist(assignedMembers, groupId);

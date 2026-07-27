@@ -62,9 +62,9 @@ const taskResolvers = {
             const task = await addTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, user.id, priority, null, statusId, departmentId, groupId);
             return mapTask(task);
         },
-        editTask: async (_, { taskId, ...updates }, context) => {
-            const groupId = requireGroup(context);
-            const task = await editTask(taskId, updates, groupId);
+        // Member action: no bearer auth (members have no login mechanism yet) — same as submitTask
+        editTask: async (_, { taskId, ...updates }) => {
+            const task = await editTask(taskId, updates);
             return mapTask(task);
         },
         deleteTask: async (_, { taskId }, context) => {
