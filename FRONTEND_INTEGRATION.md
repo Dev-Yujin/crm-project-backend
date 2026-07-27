@@ -11,6 +11,8 @@ Daily/weekly/monthly recurring tasks are a separate feature layered on top of `T
 
 How multi-tenant data isolation ("groups") works, and how a user joins a teammate's group, is also a separate doc — see [GROUPS_INTEGRATION.md](./GROUPS_INTEGRATION.md). The short version, since it affects auth on almost everything below: every account automatically belongs to exactly one **group** the moment it's created (no setup step needed), every piece of data (`clients`, `tasks`, `members`, `departments`, `services`, `taskStatuses`, `recurringTasks`) belongs to exactly one group, and a signed-in user only ever sees their own group's data — groupId is always derived server-side from their session, never passed as an argument.
 
+Optionally emailing a new member their portal link + credentials when you `addMember` them is also its own doc — see [MEMBER_INVITES_INTEGRATION.md](./MEMBER_INVITES_INTEGRATION.md).
+
 There are two actors in this system:
 - **user** — a Supabase Auth account (owns login, Google sign-in). Required for all create/delete/review/management mutations.
 - **member** — a row in the `members` table, added by a user. Members currently have **no login/session mechanism**, so member-facing mutations (`submitTask`, `editTask`) are unauthenticated and take a `memberUuid` argument directly. A member inherits their group automatically from whoever added them (`addMember` stamps the creating user's group onto the new member).
@@ -193,6 +195,8 @@ export interface Member {
   email: string;
   groupId: string | null; // inherited from whoever added them; use this for the services/departments/taskStatuses groupId arg
   createdAt: string | null;
+  inviteSent: boolean | null; // only ever set by addMember's response — see MEMBER_INVITES_INTEGRATION.md
+  inviteError: string | null;
 }
 export interface MemberAuthPayload {
   member: Member;
@@ -288,7 +292,7 @@ export interface Task {
 | `registerUser` / `loginUser` / `signInWithGoogle` | Mutation | none | prefer `supabase-js` directly (§2) instead |
 | `signOutUser` | Mutation | none | prefer `supabase.auth.signOut()` |
 | `members` | Query | **user** | full roster of the caller's own group; use to build "assign member" dropdowns |
-| `addMember` / `deleteMember` | Mutation | **user** | only users manage members; new members are stamped with the creating user's `groupId` automatically |
+| `addMember` / `deleteMember` | Mutation | **user** | only users manage members; new members are stamped with the creating user's `groupId` automatically; `addMember`'s optional `sendInvite` is documented in [MEMBER_INVITES_INTEGRATION.md](./MEMBER_INVITES_INTEGRATION.md) |
 | `loginMember` | Mutation | none | member login, returns a member JWT (separate from the Supabase user session) plus the member's `groupId` |
 | `currentMember(token)` | Query | none | verify/restore a stored member token; also returns `groupId` |
 | `editMemberProfile` | Mutation | none | member editing their own profile; not yet tied to the login token — `uuid` is still a plain, unverified argument |

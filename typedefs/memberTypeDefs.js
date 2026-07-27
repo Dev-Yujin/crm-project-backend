@@ -5,6 +5,8 @@ const memberTypeDefs = `#graphql
     email: String!
     groupId: ID
     createdAt: String
+    inviteSent: Boolean
+    inviteError: String
   }
 
   type MemberAuthPayload {
@@ -18,7 +20,7 @@ const memberTypeDefs = `#graphql
   }
 
   type Mutation {
-    addMember(username: String!, email: String!, password: String!): Member!
+    addMember(username: String!, email: String!, password: String!, sendInvite: Boolean): Member!
     deleteMember(uuid: ID!): Member!
     editMemberProfile(uuid: ID!, username: String, email: String, password: String): Member!
     loginMember(email: String!, password: String!): MemberAuthPayload!

@@ -6,7 +6,10 @@ import {
     loginMember,
     fetchMemberFromToken,
 } from '../models/membersFunction.js';
-import { requireGroup } from '../utils/requireUser.js';
+import { getDecryptedEmailCredentials } from '../models/emailCredentials.js';
+import { sendMemberInviteEmail } from '../utils/mailer.js';
+import { requireUser, requireGroup } from '../utils/requireUser.js';
+import { GraphQLError } from 'graphql';
 
 const mapMember = (row) => row && {
     uuid: row.uuid,
@@ -33,10 +36,44 @@ const memberResolvers = {
             const { member, token } = await loginMember(email, password);
             return { member: mapMember(member), token };
         },
-        addMember: async (_, { username, email, password }, context) => {
+        addMember: async (_, { username, email, password, sendInvite }, context) => {
+            const user = requireUser(context);
             const groupId = requireGroup(context);
+
+            // Fail fast, before creating anything, if an invite was requested but this
+            // user hasn't configured Gmail credentials yet (see updateEmailCredentials).
+            let credentials = null;
+            if (sendInvite) {
+                credentials = await getDecryptedEmailCredentials(user.id);
+                if (!credentials) {
+                    throw new GraphQLError(
+                        'Email credentials not configured — set them via updateEmailCredentials first, or add this member without sendInvite.',
+                        { extensions: { code: 'EMAIL_CREDENTIALS_NOT_CONFIGURED' } }
+                    );
+                }
+            }
+
             const member = await addMember(username, email, password, groupId);
-            return mapMember(member);
+
+            if (!credentials) {
+                return mapMember(member);
+            }
+
+            // Member is already created at this point — a failed send doesn't roll that back,
+            // it's just reported back via inviteSent/inviteError so the caller can retry the email.
+            try {
+                await sendMemberInviteEmail({
+                    gmailUser: credentials.email,
+                    gmailAppPassword: credentials.appPassword,
+                    toEmail: email,
+                    memberUsername: username,
+                    memberPassword: password,
+                });
+                return { ...mapMember(member), inviteSent: true, inviteError: null };
+            } catch (error) {
+                console.error('Error sending member invite email:', error);
+                return { ...mapMember(member), inviteSent: false, inviteError: error.message };
+            }
         },
         deleteMember: async (_, { uuid }, context) => {
             const groupId = requireGroup(context);

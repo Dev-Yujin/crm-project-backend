@@ -18,14 +18,16 @@ import taskStatusTypeDefs from './typedefs/taskStatusTypeDefs.js';
 import taskStatusResolvers from './resolvers/taskStatusResolvers.js';
 import groupTypeDefs from './typedefs/groupTypeDefs.js';
 import groupResolvers from './resolvers/groupResolvers.js';
+import emailCredentialsTypeDefs from './typedefs/emailCredentialsTypeDefs.js';
+import emailCredentialsResolvers from './resolvers/emailCredentialsResolvers.js';
 import { fetchCurrentUser } from './models/userFunctions.js';
 import { fetchUserGroupId } from './utils/groups.js';
 import { startScheduler } from './utils/scheduler.js';
 
 
 const server = new ApolloServer({
-  typeDefs:[userTypeDefs, memberTypeDefs, clientTypeDefs, taskTypeDefs, departmentTypeDefs, serviceTypeDefs, recurringTaskTypeDefs, taskStatusTypeDefs, groupTypeDefs],
-  resolvers:[userResolvers, memberResolvers, clientResolvers, taskResolvers, departmentResolvers, serviceResolvers, recurringTaskResolvers, taskStatusResolvers, groupResolvers],
+  typeDefs:[userTypeDefs, memberTypeDefs, clientTypeDefs, taskTypeDefs, departmentTypeDefs, serviceTypeDefs, recurringTaskTypeDefs, taskStatusTypeDefs, groupTypeDefs, emailCredentialsTypeDefs],
+  resolvers:[userResolvers, memberResolvers, clientResolvers, taskResolvers, departmentResolvers, serviceResolvers, recurringTaskResolvers, taskStatusResolvers, groupResolvers, emailCredentialsResolvers],
 });
 
 startScheduler();
