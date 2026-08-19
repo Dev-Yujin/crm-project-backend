@@ -15,6 +15,8 @@ Optionally emailing a new member their portal link + credentials when you `addMe
 
 `Task.liveLink` and `Task.source` (the "Live Link" and "Source" fields on the Create/Edit Task form) have their own rationale, validation, and a partial-update footgun worth reading before wiring up the edit form — see [LIVE_LINK_SOURCE_INTEGRATION.md](./LIVE_LINK_SOURCE_INTEGRATION.md). The operation strings themselves (`ADD_TASK`, `EDIT_TASK`, `GET_TASKS`, `GET_TASKS_FOR_MEMBER`) already include both fields in §6 below.
 
+Letting one admin assign a task to another admin (`Task.assignedUsers` / `RecurringTask.assignedUsers`, separate from the member-facing `assignedMembers`) is documented in [ADMIN_ASSIGNMENT_INTEGRATION.md](./ADMIN_ASSIGNMENT_INTEGRATION.md) — **deployed**, safe to flip the `TASK_ASSIGNED_USERS` feature flag.
+
 There are two actors in this system:
 - **user** — a Supabase Auth account (owns login, Google sign-in). Required for all create/delete/review/management mutations.
 - **member** — a row in the `members` table, added by a user. Members currently have **no login/session mechanism**, so member-facing mutations (`submitTask`, `editTask`) are unauthenticated and take a `memberUuid` argument directly. A member inherits their group automatically from whoever added them (`addMember` stamps the creating user's group onto the new member).
@@ -270,6 +272,7 @@ export interface Task {
   taskDescription: string;
   serviceId: string; // must be one of that client's servicesAvailed
   assignedMembers: string[]; // member uuids
+  assignedUsers: string[]; // admin (Supabase user) ids — separate id space from assignedMembers, see ADMIN_ASSIGNMENT_INTEGRATION.md
   dueDate: string | null;
   createdBy: string | null; // user id
   priority: TaskPriority;
@@ -313,7 +316,7 @@ export interface Task {
 | `addTask` / `editTask` `departmentId` arg | Mutation arg | **user** | optional; must reference an existing `Department` in the caller's group. Same non-cascading caveat — deleting a department in use leaves a dangling `departmentId` on any task referencing it. Purely informational (e.g. "this task belongs to the Video Editing dept.") — it is **not** validated against `assignedMembers`, so a task can be tagged to a department none of its assignees belong to |
 | `tasks` | Query | **user** | all tasks in the caller's group |
 | `tasksForMember(memberUuid)` | Query | none | filtered to one member's assigned tasks, scoped to that member's own group automatically — use for a "my tasks" screen |
-| `addTask` / `deleteTask` / `reviewTask` | Mutation | **user** | scoped to the caller's group; `createdBy`/`reviewedBy` come from the session, not client input |
+| `addTask` / `deleteTask` / `reviewTask` | Mutation | **user** | scoped to the caller's group; `createdBy`/`reviewedBy` come from the session, not client input; `assignedUsers` arg documented in [ADMIN_ASSIGNMENT_INTEGRATION.md](./ADMIN_ASSIGNMENT_INTEGRATION.md) |
 | `editTask` / `submitTask` | Mutation | none | member actions; `memberUuid` is self-declared |
 
 "Auth required: user" means `graphqlRequest` needs an active Supabase session (it attaches the token automatically per §3). See the "Groups" section above for how `groupId` scoping actually works — it's not something you manage per-request for signed-in users, only for the three unauthenticated catalog queries.
@@ -575,7 +578,7 @@ const GET_TASKS = `
   query GetTasks {
     tasks {
       id clientId clientName taskName taskDescription serviceId
-      assignedMembers dueDate createdBy priority statusId departmentId groupId liveLink source createdAt recurringTaskId
+      assignedMembers assignedUsers dueDate createdBy priority statusId departmentId groupId liveLink source createdAt recurringTaskId
       submission { link note submittedBy submittedAt }
       revisions { id comment reviewedBy reviewedAt }
     }
@@ -587,7 +590,7 @@ const GET_TASKS_FOR_MEMBER = `
   query GetTasksForMember($memberUuid: ID!) {
     tasksForMember(memberUuid: $memberUuid) {
       id clientId clientName taskName taskDescription serviceId
-      assignedMembers dueDate createdBy priority statusId departmentId groupId liveLink source createdAt recurringTaskId
+      assignedMembers assignedUsers dueDate createdBy priority statusId departmentId groupId liveLink source createdAt recurringTaskId
       submission { link note submittedBy submittedAt }
       revisions { id comment reviewedBy reviewedAt }
     }
@@ -608,6 +611,7 @@ const ADD_TASK = `
     $departmentId: ID
     $liveLink: String
     $source: String
+    $assignedUsers: [ID!]
   ) {
     addTask(
       clientId: $clientId
@@ -622,8 +626,9 @@ const ADD_TASK = `
       departmentId: $departmentId
       liveLink: $liveLink
       source: $source
+      assignedUsers: $assignedUsers
     ) {
-      id taskName statusId departmentId groupId serviceId assignedMembers priority liveLink source
+      id taskName statusId departmentId groupId serviceId assignedMembers assignedUsers priority liveLink source
     }
   }
 `;
@@ -632,6 +637,9 @@ const ADD_TASK = `
 // statusId is optional and, if provided, must reference an existing entry in the taskStatuses catalog.
 // departmentId is optional and, if provided, must reference an existing entry in the departments catalog.
 // liveLink/source are both optional — see LIVE_LINK_SOURCE_INTEGRATION.md for validation rules and what they mean.
+// assignedUsers is optional — admin (Supabase user) ids, separate from assignedMembers; an empty
+// assignedMembers is now valid as long as at least one list has an assignee (frontend enforces this) —
+// see ADMIN_ASSIGNMENT_INTEGRATION.md.
 
 const EDIT_TASK = `
   mutation EditTask(
@@ -648,6 +656,7 @@ const EDIT_TASK = `
     $departmentId: ID
     $liveLink: String
     $source: String
+    $assignedUsers: [ID!]
   ) {
     editTask(
       taskId: $taskId
@@ -663,8 +672,9 @@ const EDIT_TASK = `
       departmentId: $departmentId
       liveLink: $liveLink
       source: $source
+      assignedUsers: $assignedUsers
     ) {
-      id taskName taskDescription serviceId assignedMembers dueDate priority statusId departmentId groupId liveLink source
+      id taskName taskDescription serviceId assignedMembers assignedUsers dueDate priority statusId departmentId groupId liveLink source
     }
   }
 `;
@@ -675,6 +685,10 @@ const EDIT_TASK = `
 //
 // liveLink/source: omitted leaves the stored value untouched, null/"" clears it — see
 // LIVE_LINK_SOURCE_INTEGRATION.md for the partial-update footgun this creates on edit forms.
+//
+// assignedUsers has the same omitted-vs-empty-array rule: leave the arg out to leave assignees
+// untouched, send [] to clear them — see ADMIN_ASSIGNMENT_INTEGRATION.md. Calls to EDIT_TASK that
+// only touch one other field (e.g. just statusId) must not include assignedUsers at all.
 
 const DELETE_TASK = `
   mutation DeleteTask($taskId: ID!) {

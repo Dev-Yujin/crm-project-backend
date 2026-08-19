@@ -31,6 +31,7 @@ const mapTask = (task) => task && {
     taskDescription: task.taskDescription,
     serviceId: task.serviceId,
     assignedMembers: task.assignedMembers ?? [],
+    assignedUsers: task.assignedUsers ?? [],
     dueDate: task.dueDate ?? null,
     createdBy: task.createdBy ?? null,
     priority: task.priority,
@@ -58,10 +59,10 @@ const taskResolvers = {
         },
     },
     Mutation: {
-        addTask: async (_, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId, liveLink, source }, context) => {
+        addTask: async (_, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId, liveLink, source, assignedUsers }, context) => {
             const user = requireUser(context);
             const groupId = requireGroup(context);
-            const task = await addTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, user.id, priority, null, statusId, departmentId, groupId, liveLink, source);
+            const task = await addTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, user.id, priority, null, statusId, departmentId, groupId, liveLink, source, assignedUsers);
             return mapTask(task);
         },
         // Member action: no bearer auth (members have no login mechanism yet) — same as submitTask

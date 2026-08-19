@@ -28,6 +28,7 @@ const taskTypeDefs = `#graphql
     taskDescription: String!
     serviceId: ID!
     assignedMembers: [ID!]!
+    assignedUsers: [ID!]!
     dueDate: String
     createdBy: ID
     priority: TaskPriority!
@@ -61,6 +62,7 @@ const taskTypeDefs = `#graphql
       departmentId: ID
       liveLink: String
       source: String
+      assignedUsers: [ID!]
     ): Task!
     editTask(
       taskId: ID!
@@ -76,6 +78,7 @@ const taskTypeDefs = `#graphql
       departmentId: ID
       liveLink: String
       source: String
+      assignedUsers: [ID!]
     ): Task!
     deleteTask(taskId: ID!): Task!
     submitTask(taskId: ID!, memberUuid: ID!, link: String!, note: String): Task!

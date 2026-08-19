@@ -6,6 +6,7 @@ import {
     addTask,
     TASK_PRIORITY,
 } from "./task.js";
+import { validateUsersExist } from "./groups.js";
 //Recurring task templates: on their schedule, the scheduler generates a fresh
 //one-off Task instance (via addTask) tagged with recurringTaskId
 
@@ -28,10 +29,13 @@ const computeNextRun = (from, recurrence) => {
 };
 
 //Create a recurring task template and immediately generate its first task instance
-export const addRecurringTask = async (clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, createdBy, recurrence, priority = TASK_PRIORITY.MEDIUM, groupId) => {
+export const addRecurringTask = async (clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, createdBy, recurrence, priority = TASK_PRIORITY.MEDIUM, groupId, assignedUsers = []) => {
     try {
         await validateMembersExist(assignedMembers, groupId);
+        await validateUsersExist(assignedUsers, groupId);
         await validateServiceForClient(clientId, serviceId, groupId);
+
+        const dedupedAssignedUsers = [...new Set(assignedUsers ?? [])];
 
         const recurringTasksRef = ref(db, "recurringTasks");
         const newTemplateRef = push(recurringTasksRef);
@@ -44,6 +48,7 @@ export const addRecurringTask = async (clientId, clientName, taskName, taskDescr
             taskDescription,
             serviceId,
             assignedMembers,
+            assignedUsers: dedupedAssignedUsers,
             createdBy,
             priority,
             recurrence,
@@ -55,7 +60,7 @@ export const addRecurringTask = async (clientId, clientName, taskName, taskDescr
 
         await set(newTemplateRef, template);
 
-        await addTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, null, createdBy, priority, newTemplateRef.key, null, null, groupId);
+        await addTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, null, createdBy, priority, newTemplateRef.key, null, null, groupId, null, null, dedupedAssignedUsers);
 
         return { id: newTemplateRef.key, ...template };
     } catch (error) {
@@ -156,7 +161,10 @@ export const runDueRecurringTasks = async () => {
                 template.id,
                 null,
                 null,
-                template.groupId
+                template.groupId,
+                null,
+                null,
+                template.assignedUsers
             );
             generated.push(task);
 

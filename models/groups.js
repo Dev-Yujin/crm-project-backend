@@ -42,6 +42,22 @@ export const getGroupUsers = async (groupId) => {
     return result.rows;
 };
 
+//Throws if any of the given ids isn't a GroupUser (Supabase Auth user) belonging to the given group —
+//used to validate Task/RecurringTask.assignedUsers, the admin-side counterpart to assignedMembers
+export const validateUsersExist = async (userIds, groupId) => {
+    if (!userIds || userIds.length === 0) {
+        return;
+    }
+
+    const result = await pool.query('SELECT "userId" FROM groups WHERE "userId" = ANY($1) AND "groupId" = $2', [userIds, groupId]);
+    const foundIds = new Set(result.rows.map((row) => row.userId));
+    const missing = userIds.filter((id) => !foundIds.has(id));
+
+    if (missing.length > 0) {
+        throw new Error(`User(s) not found in this group: ${missing.join(", ")}`);
+    }
+};
+
 //Fetch the current user's group + shareable join code
 export const getMyGroup = async (userId) => {
     const result = await pool.query('SELECT "groupId", join_code FROM groups WHERE "userId" = $1 LIMIT 1', [userId]);

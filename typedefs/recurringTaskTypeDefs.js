@@ -13,6 +13,7 @@ const recurringTaskTypeDefs = `#graphql
     taskDescription: String!
     serviceId: ID!
     assignedMembers: [ID!]!
+    assignedUsers: [ID!]!
     priority: TaskPriority!
     recurrence: Recurrence!
     createdBy: ID
@@ -36,6 +37,7 @@ const recurringTaskTypeDefs = `#graphql
       assignedMembers: [ID!]!
       recurrence: Recurrence!
       priority: TaskPriority
+      assignedUsers: [ID!]
     ): RecurringTask!
     deleteRecurringTask(recurringTaskId: ID!): Boolean!
     pauseRecurringTask(recurringTaskId: ID!): RecurringTask!

@@ -4,6 +4,7 @@ import { pool } from "../config/supabase.js";
 import { validateTaskStatusExists } from "./taskStatuses.js";
 import { validateDepartmentExists } from "./departments.js";
 import { fetchMemberGroupId } from "../utils/groups.js";
+import { validateUsersExist } from "./groups.js";
 
 const db = getDatabase(app);
 
@@ -14,9 +15,10 @@ export const TASK_PRIORITY = {
     URGENT: "URGENT",
 };
 
+//A task may be assigned to admins only, so an empty list here is valid — not every task needs a member
 export const validateMembersExist = async (memberUuids, groupId) => {
     if (!memberUuids || memberUuids.length === 0) {
-        throw new Error("At least one assigned member is required");
+        return;
     }
 
     const result = await pool.query("SELECT uuid FROM members WHERE uuid = ANY($1) AND group_id = $2", [memberUuids, groupId]);
@@ -100,15 +102,17 @@ export const getTasksForMember = async (memberUuid) => {
 //Add a new task (created by a user, assigned to one or more members, tied to one of the client's availed services)
 //statusId is optional and freely chosen from the user-managed task status catalog — there is no fixed workflow
 //recurringTaskId is set internally when a recurring task template generates an instance — not exposed on the public addTask mutation
-export const addTask = async (clientId, clientName, taskName, taskDescription, serviceId, assignedMembers = [], dueDate = null, createdBy, priority = TASK_PRIORITY.MEDIUM, recurringTaskId = null, statusId = null, departmentId = null, groupId, liveLink = null, source = null) => {
+export const addTask = async (clientId, clientName, taskName, taskDescription, serviceId, assignedMembers = [], dueDate = null, createdBy, priority = TASK_PRIORITY.MEDIUM, recurringTaskId = null, statusId = null, departmentId = null, groupId, liveLink = null, source = null, assignedUsers = []) => {
     try {
         await validateMembersExist(assignedMembers, groupId);
+        await validateUsersExist(assignedUsers, groupId);
         await validateServiceForClient(clientId, serviceId, groupId);
         await validateTaskStatusExists(statusId, groupId);
         await validateDepartmentExists(departmentId, groupId);
 
         const normalizedLiveLink = liveLink != null ? normalizeLiveLink(liveLink) : null;
         const normalizedSource = source != null ? normalizeSource(source) : null;
+        const dedupedAssignedUsers = [...new Set(assignedUsers ?? [])];
 
         const tasksRef = ref(db, "tasks");
         const newTaskRef = push(tasksRef);
@@ -119,6 +123,7 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
             taskDescription,
             serviceId,
             assignedMembers,
+            assignedUsers: dedupedAssignedUsers,
             dueDate,
             createdBy,
             priority,
@@ -139,6 +144,7 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
             taskDescription,
             serviceId,
             assignedMembers,
+            assignedUsers: dedupedAssignedUsers,
             dueDate,
             createdBy,
             priority,
@@ -177,7 +183,7 @@ export const deleteTask = async (taskId, groupId) => {
 //Edit a task's details, including freely setting its statusId — there is no fixed workflow gating this.
 //This is a member action (no bearer auth) same as submitTask, so there's no caller-supplied groupId to check
 //against — the task's own stored groupId is used to scope any cross-reference validation instead.
-export const editTask = async (taskId, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId, liveLink, source } = {}) => {
+export const editTask = async (taskId, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId, liveLink, source, assignedUsers } = {}) => {
     try {
         const taskRef = ref(db, `tasks/${taskId}`);
         const taskSnapshot = await get(taskRef);
@@ -191,6 +197,10 @@ export const editTask = async (taskId, { clientId, clientName, taskName, taskDes
 
         if (assignedMembers !== undefined) {
             await validateMembersExist(assignedMembers, groupId);
+        }
+
+        if (assignedUsers !== undefined) {
+            await validateUsersExist(assignedUsers, groupId);
         }
 
         if (clientId !== undefined || serviceId !== undefined) {
@@ -227,6 +237,7 @@ export const editTask = async (taskId, { clientId, clientName, taskName, taskDes
             ...(departmentId !== undefined && { departmentId }),
             ...(liveLink !== undefined && { liveLink: normalizedLiveLink }),
             ...(source !== undefined && { source: normalizedSource }),
+            ...(assignedUsers !== undefined && { assignedUsers: [...new Set(assignedUsers ?? [])] }),
         };
 
         const finalData = { ...task, ...updatedTaskData };

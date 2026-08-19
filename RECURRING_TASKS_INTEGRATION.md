@@ -49,6 +49,7 @@ export interface RecurringTask {
   taskDescription: string;
   serviceId: string;
   assignedMembers: string[]; // member uuids
+  assignedUsers: string[]; // admin (Supabase user) ids — see ADMIN_ASSIGNMENT_INTEGRATION.md
   priority: TaskPriority; // from FRONTEND_INTEGRATION.md
   recurrence: Recurrence;
   createdBy: string | null; // user id
@@ -74,7 +75,7 @@ const GET_RECURRING_TASKS = `
   query GetRecurringTasks {
     recurringTasks {
       id clientId clientName taskName taskDescription serviceId
-      assignedMembers priority recurrence createdBy active lastRunAt nextRunAt groupId
+      assignedMembers assignedUsers priority recurrence createdBy active lastRunAt nextRunAt groupId
     }
   }
 `;
@@ -89,6 +90,7 @@ const ADD_RECURRING_TASK = `
     $assignedMembers: [ID!]!
     $recurrence: Recurrence!
     $priority: TaskPriority
+    $assignedUsers: [ID!]
   ) {
     addRecurringTask(
       clientId: $clientId
@@ -99,14 +101,18 @@ const ADD_RECURRING_TASK = `
       assignedMembers: $assignedMembers
       recurrence: $recurrence
       priority: $priority
+      assignedUsers: $assignedUsers
     ) {
-      id taskName recurrence active nextRunAt groupId
+      id taskName recurrence active nextRunAt groupId assignedMembers assignedUsers
     }
   }
 `;
 // priority defaults to MEDIUM if omitted. serviceId must be one of the
 // selected client's servicesAvailed — same constraint as addTask.
 // This call also generates the first Task instance immediately; no follow-up call needed.
+// assignedUsers is optional (admin ids, separate from assignedMembers) — the first generated
+// Task instance inherits it, and so does every instance the scheduler generates afterward.
+// See ADMIN_ASSIGNMENT_INTEGRATION.md.
 
 const PAUSE_RECURRING_TASK = `
   mutation PauseRecurringTask($recurringTaskId: ID!) {
