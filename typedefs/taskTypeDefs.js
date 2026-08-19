@@ -34,6 +34,8 @@ const taskTypeDefs = `#graphql
     statusId: ID
     departmentId: ID
     groupId: ID!
+    liveLink: String
+    source: String
     createdAt: String
     submission: Submission
     revisions: [Revision!]!
@@ -57,6 +59,8 @@ const taskTypeDefs = `#graphql
       priority: TaskPriority
       statusId: ID
       departmentId: ID
+      liveLink: String
+      source: String
     ): Task!
     editTask(
       taskId: ID!
@@ -70,6 +74,8 @@ const taskTypeDefs = `#graphql
       priority: TaskPriority
       statusId: ID
       departmentId: ID
+      liveLink: String
+      source: String
     ): Task!
     deleteTask(taskId: ID!): Task!
     submitTask(taskId: ID!, memberUuid: ID!, link: String!, note: String): Task!

@@ -13,6 +13,8 @@ How multi-tenant data isolation ("groups") works, and how a user joins a teammat
 
 Optionally emailing a new member their portal link + credentials when you `addMember` them is also its own doc — see [MEMBER_INVITES_INTEGRATION.md](./MEMBER_INVITES_INTEGRATION.md).
 
+`Task.liveLink` and `Task.source` (the "Live Link" and "Source" fields on the Create/Edit Task form) have their own rationale, validation, and a partial-update footgun worth reading before wiring up the edit form — see [LIVE_LINK_SOURCE_INTEGRATION.md](./LIVE_LINK_SOURCE_INTEGRATION.md). The operation strings themselves (`ADD_TASK`, `EDIT_TASK`, `GET_TASKS`, `GET_TASKS_FOR_MEMBER`) already include both fields in §6 below.
+
 There are two actors in this system:
 - **user** — a Supabase Auth account (owns login, Google sign-in). Required for all create/delete/review/management mutations.
 - **member** — a row in the `members` table, added by a user. Members currently have **no login/session mechanism**, so member-facing mutations (`submitTask`, `editTask`) are unauthenticated and take a `memberUuid` argument directly. A member inherits their group automatically from whoever added them (`addMember` stamps the creating user's group onto the new member).
@@ -274,6 +276,8 @@ export interface Task {
   statusId: string | null; // freely settable, references the TaskStatus catalog — no fixed workflow or gating
   departmentId: string | null; // optional, references the Department catalog — purely informational, not validated against assignedMembers
   groupId: string;
+  liveLink: string | null; // set by the creator (http/https only) — the doc/preview to work FROM, distinct from submission.link (the assignee's completed work)
+  source: string | null; // free text origin, e.g. "WhatsApp", "Email", "Client call"
   createdAt: string | null;
   submission: Submission | null;
   revisions: Revision[];
@@ -571,7 +575,7 @@ const GET_TASKS = `
   query GetTasks {
     tasks {
       id clientId clientName taskName taskDescription serviceId
-      assignedMembers dueDate createdBy priority statusId departmentId groupId createdAt recurringTaskId
+      assignedMembers dueDate createdBy priority statusId departmentId groupId liveLink source createdAt recurringTaskId
       submission { link note submittedBy submittedAt }
       revisions { id comment reviewedBy reviewedAt }
     }
@@ -583,7 +587,7 @@ const GET_TASKS_FOR_MEMBER = `
   query GetTasksForMember($memberUuid: ID!) {
     tasksForMember(memberUuid: $memberUuid) {
       id clientId clientName taskName taskDescription serviceId
-      assignedMembers dueDate createdBy priority statusId departmentId groupId createdAt recurringTaskId
+      assignedMembers dueDate createdBy priority statusId departmentId groupId liveLink source createdAt recurringTaskId
       submission { link note submittedBy submittedAt }
       revisions { id comment reviewedBy reviewedAt }
     }
@@ -602,6 +606,8 @@ const ADD_TASK = `
     $priority: TaskPriority
     $statusId: ID
     $departmentId: ID
+    $liveLink: String
+    $source: String
   ) {
     addTask(
       clientId: $clientId
@@ -614,8 +620,10 @@ const ADD_TASK = `
       priority: $priority
       statusId: $statusId
       departmentId: $departmentId
+      liveLink: $liveLink
+      source: $source
     ) {
-      id taskName statusId departmentId groupId serviceId assignedMembers priority
+      id taskName statusId departmentId groupId serviceId assignedMembers priority liveLink source
     }
   }
 `;
@@ -623,6 +631,7 @@ const ADD_TASK = `
 // selected client's servicesAvailed (see the flow note above the table in §5).
 // statusId is optional and, if provided, must reference an existing entry in the taskStatuses catalog.
 // departmentId is optional and, if provided, must reference an existing entry in the departments catalog.
+// liveLink/source are both optional — see LIVE_LINK_SOURCE_INTEGRATION.md for validation rules and what they mean.
 
 const EDIT_TASK = `
   mutation EditTask(
@@ -637,6 +646,8 @@ const EDIT_TASK = `
     $priority: TaskPriority
     $statusId: ID
     $departmentId: ID
+    $liveLink: String
+    $source: String
   ) {
     editTask(
       taskId: $taskId
@@ -650,8 +661,10 @@ const EDIT_TASK = `
       priority: $priority
       statusId: $statusId
       departmentId: $departmentId
+      liveLink: $liveLink
+      source: $source
     ) {
-      id taskName taskDescription serviceId assignedMembers dueDate priority statusId departmentId groupId
+      id taskName taskDescription serviceId assignedMembers dueDate priority statusId departmentId groupId liveLink source
     }
   }
 `;
@@ -659,6 +672,9 @@ const EDIT_TASK = `
 // user picked. There's no dedicated "set status" mutation; it's just a field edit.
 // Same pattern for department — pass whichever departments.id it belongs to, or
 // null to clear it. Not validated against assignedMembers.
+//
+// liveLink/source: omitted leaves the stored value untouched, null/"" clears it — see
+// LIVE_LINK_SOURCE_INTEGRATION.md for the partial-update footgun this creates on edit forms.
 
 const DELETE_TASK = `
   mutation DeleteTask($taskId: ID!) {

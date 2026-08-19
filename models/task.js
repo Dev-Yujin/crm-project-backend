@@ -46,6 +46,25 @@ export const validateServiceForClient = async (clientId, serviceId, groupId) => 
 const mapRevisions = (revisions) =>
     revisions ? Object.entries(revisions).map(([id, revision]) => ({ id, ...revision })) : [];
 
+//Trims free text and stores null rather than "" — used for `source`
+const normalizeSource = (value) => {
+    const trimmed = value.trim();
+    return trimmed === "" ? null : trimmed;
+};
+
+//Trims and validates a URL — only http(s) is accepted (javascript:/data: URLs would be
+//an XSS vector, since the frontend renders liveLink as a clickable anchor)
+const normalizeLiveLink = (value) => {
+    const trimmed = value.trim();
+    if (trimmed === "") return null;
+
+    if (!/^https?:\/\//i.test(trimmed)) {
+        throw new Error("liveLink must start with http:// or https://");
+    }
+
+    return trimmed;
+};
+
 //Fetch all tasks belonging to a group
 export const getAllTasks = async (groupId) => {
     try {
@@ -81,12 +100,15 @@ export const getTasksForMember = async (memberUuid) => {
 //Add a new task (created by a user, assigned to one or more members, tied to one of the client's availed services)
 //statusId is optional and freely chosen from the user-managed task status catalog — there is no fixed workflow
 //recurringTaskId is set internally when a recurring task template generates an instance — not exposed on the public addTask mutation
-export const addTask = async (clientId, clientName, taskName, taskDescription, serviceId, assignedMembers = [], dueDate = null, createdBy, priority = TASK_PRIORITY.MEDIUM, recurringTaskId = null, statusId = null, departmentId = null, groupId) => {
+export const addTask = async (clientId, clientName, taskName, taskDescription, serviceId, assignedMembers = [], dueDate = null, createdBy, priority = TASK_PRIORITY.MEDIUM, recurringTaskId = null, statusId = null, departmentId = null, groupId, liveLink = null, source = null) => {
     try {
         await validateMembersExist(assignedMembers, groupId);
         await validateServiceForClient(clientId, serviceId, groupId);
         await validateTaskStatusExists(statusId, groupId);
         await validateDepartmentExists(departmentId, groupId);
+
+        const normalizedLiveLink = liveLink != null ? normalizeLiveLink(liveLink) : null;
+        const normalizedSource = source != null ? normalizeSource(source) : null;
 
         const tasksRef = ref(db, "tasks");
         const newTaskRef = push(tasksRef);
@@ -104,6 +126,8 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
             statusId,
             departmentId,
             groupId,
+            liveLink: normalizedLiveLink,
+            source: normalizedSource,
             createdAt: serverTimestamp(),
         });
 
@@ -122,6 +146,8 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
             statusId,
             departmentId,
             groupId,
+            liveLink: normalizedLiveLink,
+            source: normalizedSource,
             revisions: [],
         };
     } catch (error) {
@@ -151,7 +177,7 @@ export const deleteTask = async (taskId, groupId) => {
 //Edit a task's details, including freely setting its statusId — there is no fixed workflow gating this.
 //This is a member action (no bearer auth) same as submitTask, so there's no caller-supplied groupId to check
 //against — the task's own stored groupId is used to scope any cross-reference validation instead.
-export const editTask = async (taskId, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId } = {}) => {
+export const editTask = async (taskId, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId, liveLink, source } = {}) => {
     try {
         const taskRef = ref(db, `tasks/${taskId}`);
         const taskSnapshot = await get(taskRef);
@@ -183,6 +209,11 @@ export const editTask = async (taskId, { clientId, clientName, taskName, taskDes
             await validateDepartmentExists(departmentId, groupId);
         }
 
+        // Argument not provided (undefined) -> leave stored value untouched.
+        // Argument provided as null or "" -> clear the field.
+        const normalizedLiveLink = liveLink !== undefined ? (liveLink == null ? null : normalizeLiveLink(liveLink)) : undefined;
+        const normalizedSource = source !== undefined ? (source == null ? null : normalizeSource(source)) : undefined;
+
         const updatedTaskData = {
             ...(clientId !== undefined && { clientId }),
             ...(clientName !== undefined && { clientName }),
@@ -194,6 +225,8 @@ export const editTask = async (taskId, { clientId, clientName, taskName, taskDes
             ...(priority !== undefined && { priority }),
             ...(statusId !== undefined && { statusId }),
             ...(departmentId !== undefined && { departmentId }),
+            ...(liveLink !== undefined && { liveLink: normalizedLiveLink }),
+            ...(source !== undefined && { source: normalizedSource }),
         };
 
         const finalData = { ...task, ...updatedTaskData };
