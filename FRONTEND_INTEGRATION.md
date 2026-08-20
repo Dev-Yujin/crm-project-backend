@@ -19,9 +19,11 @@ Letting one admin assign a task to another admin (`Task.assignedUsers` / `Recurr
 
 `RecurringTask.departmentId` — the department a template's generated tasks belong to — is documented in [RECURRING_DEPARTMENT_INTEGRATION.md](./RECURRING_DEPARTMENT_INTEGRATION.md) — **deployed**, safe to flip the `RECURRING_TASK_DEPARTMENT` feature flag.
 
+**Breaking change, action required:** member-facing operations (`tasksForMember`, `editTask`, `submitTask`, `currentMember`, `editMemberProfile`) now require a member session, sent as an **httpOnly cookie** — `loginMember` no longer returns a token to store, and every member-portal fetch needs `credentials: 'include'`. See [MEMBER_SECURITY_INTEGRATION.md](./MEMBER_SECURITY_INTEGRATION.md) for exactly what changed. **Until the frontend sends `credentials: 'include'` as described there, these calls will fail with `UNAUTHENTICATED` for real members.**
+
 There are two actors in this system:
 - **user** — a Supabase Auth account (owns login, Google sign-in). Required for all create/delete/review/management mutations.
-- **member** — a row in the `members` table, added by a user. Members currently have **no login/session mechanism**, so member-facing mutations (`submitTask`, `editTask`) are unauthenticated and take a `memberUuid` argument directly. A member inherits their group automatically from whoever added them (`addMember` stamps the creating user's group onto the new member).
+- **member** — a row in the `members` table, added by a user, with their own login (`loginMember`). Member-facing operations (`tasksForMember`, `editTask`, `submitTask`, `currentMember`, `editMemberProfile`) require a member session, carried as an httpOnly cookie — see [MEMBER_SECURITY_INTEGRATION.md](./MEMBER_SECURITY_INTEGRATION.md). A member inherits their group automatically from whoever added them (`addMember` stamps the creating user's group onto the new member).
 
 The three **public catalog queries** members rely on without logging in — `services`, `departments`, `taskStatuses` — are the one exception to "groupId is always server-derived": since there's no session to derive a group from, they accept an optional `groupId` argument. A member gets their own `groupId` from `loginMember`/`currentMember` (see §4/§6) and passes it along explicitly on every call. If you call one of these while signed in as a user, omit the argument — your session's group wins automatically.
 
@@ -302,9 +304,11 @@ export interface Task {
 | `signOutUser` | Mutation | none | prefer `supabase.auth.signOut()` |
 | `members` | Query | **user** | full roster of the caller's own group; use to build "assign member" dropdowns |
 | `addMember` / `deleteMember` | Mutation | **user** | only users manage members; new members are stamped with the creating user's `groupId` automatically; `addMember`'s optional `sendInvite` is documented in [MEMBER_INVITES_INTEGRATION.md](./MEMBER_INVITES_INTEGRATION.md) |
-| `loginMember` | Mutation | none | member login, returns a member JWT (separate from the Supabase user session) plus the member's `groupId` |
-| `currentMember(token)` | Query | none | verify/restore a stored member token; also returns `groupId` |
-| `editMemberProfile` | Mutation | none | member editing their own profile; not yet tied to the login token — `uuid` is still a plain, unverified argument |
+| `loginMember` | Mutation | none | member login; sets an httpOnly session cookie (no token in the response), returns `member` incl. `groupId`; rate-limited — see [MEMBER_SECURITY_INTEGRATION.md](./MEMBER_SECURITY_INTEGRATION.md) |
+| `logoutMember` | Mutation | **member** | clears the session cookie server-side — the only way to actually log out |
+| `currentMember` | Query | **member** (cookie) | verify/restore the member session; also returns `groupId` — see [MEMBER_SECURITY_INTEGRATION.md](./MEMBER_SECURITY_INTEGRATION.md) |
+| `editMemberProfile` | Mutation | **member** | always edits the caller's own profile; `uuid` arg is ignored — see [MEMBER_SECURITY_INTEGRATION.md](./MEMBER_SECURITY_INTEGRATION.md) |
+| `revokeMemberSessions(uuid)` | Mutation | **user** | force-logs-out a member by invalidating every session they hold — see [MEMBER_SECURITY_INTEGRATION.md](./MEMBER_SECURITY_INTEGRATION.md) |
 | `departments(groupId)` | Query | none for members (`groupId` arg required) / **user** (`groupId` derived from session, arg ignored) | members need to read their own department without login |
 | `addDepartment` / `updateDepartment` / `deleteDepartment` | Mutation | **user** | scoped to the caller's group; deleting a department in use by a task doesn't cascade — leaves a dangling `departmentId` |
 | `addMemberToDepartment` / `removeMemberFromDepartment` | Mutation | **user** | scoped to the caller's group; a member can currently belong to more than one department — nothing enforces exclusivity |
@@ -317,9 +321,9 @@ export interface Task {
 | `addTaskStatus` / `updateTaskStatus` / `deleteTaskStatus` | Mutation | **user** | scoped to the caller's group; same non-cascading caveat as services — deleting one in use leaves a dangling `statusId` on any task referencing it |
 | `addTask` / `editTask` `departmentId` arg | Mutation arg | **user** | optional; must reference an existing `Department` in the caller's group. Same non-cascading caveat — deleting a department in use leaves a dangling `departmentId` on any task referencing it. Purely informational (e.g. "this task belongs to the Video Editing dept.") — it is **not** validated against `assignedMembers`, so a task can be tagged to a department none of its assignees belong to |
 | `tasks` | Query | **user** | all tasks in the caller's group |
-| `tasksForMember(memberUuid)` | Query | none | filtered to one member's assigned tasks, scoped to that member's own group automatically — use for a "my tasks" screen |
+| `tasksForMember` | Query | **member** | filtered to the caller's own assigned tasks — `memberUuid` arg is ignored, identity comes from the token; use for a "my tasks" screen — see [MEMBER_SECURITY_INTEGRATION.md](./MEMBER_SECURITY_INTEGRATION.md) |
 | `addTask` / `deleteTask` / `reviewTask` | Mutation | **user** | scoped to the caller's group; `createdBy`/`reviewedBy` come from the session, not client input; `assignedUsers` arg documented in [ADMIN_ASSIGNMENT_INTEGRATION.md](./ADMIN_ASSIGNMENT_INTEGRATION.md) |
-| `editTask` / `submitTask` | Mutation | none | member actions; `memberUuid` is self-declared |
+| `editTask` / `submitTask` | Mutation | **member** | scoped to the caller's own group; `memberUuid` arg (on `submitTask`) is ignored, identity comes from the token — see [MEMBER_SECURITY_INTEGRATION.md](./MEMBER_SECURITY_INTEGRATION.md) |
 
 "Auth required: user" means `graphqlRequest` needs an active Supabase session (it attaches the token automatically per §3). See the "Groups" section above for how `groupId` scoping actually works — it's not something you manage per-request for signed-in users, only for the three unauthenticated catalog queries.
 
@@ -342,25 +346,32 @@ const GET_MEMBERS = `
   }
 `;
 
-// Member login — separate from Google/user login in §2. Returns a member-scoped
-// JWT (7-day expiry), NOT a Supabase session. Store it separately (e.g. its own
-// localStorage key) and don't pass it as the GraphQL Authorization header —
-// graphqlRequest (§3) only attaches the Supabase user session there.
+// Member login — separate from Google/user login in §2. Sets a member-scoped session as
+// an httpOnly cookie (1-day expiry), NOT a Supabase session and NOT a token you handle —
+// there's nothing in the response to store. Every fetch to this endpoint from the member
+// portal (this call included) must set `credentials: 'include'` so the browser sends/
+// accepts that cookie — see MEMBER_SECURITY_INTEGRATION.md.
 // member.groupId is what you pass into the services/departments/taskStatuses
 // groupId argument (§5) since a member has no session to derive it from.
 const LOGIN_MEMBER = `
   mutation LoginMember($email: String!, $password: String!) {
     loginMember(email: $email, password: $password) {
       member { uuid username email groupId createdAt }
-      token
     }
   }
 `;
 
-// Verify a stored member token is still valid / restore the member on app load
+const LOGOUT_MEMBER = `
+  mutation LogoutMember {
+    logoutMember
+  }
+`;
+
+// Restore the member session on app load — reads the cookie automatically
+// (credentials: 'include' required, same as every other member-portal call).
 const CURRENT_MEMBER = `
-  query CurrentMember($token: String!) {
-    currentMember(token: $token) { uuid username email groupId createdAt }
+  query CurrentMember {
+    currentMember { uuid username email groupId createdAt }
   }
 `;
 
@@ -378,9 +389,12 @@ const DELETE_MEMBER = `
   }
 `;
 
+// Requires the member's bearer token — always edits the caller's own profile, there is
+// no uuid argument anymore. See MEMBER_SECURITY_INTEGRATION.md. Changing the password
+// invalidates the member's own current token too — expect to redirect to login after this.
 const EDIT_MEMBER_PROFILE = `
-  mutation EditMemberProfile($uuid: ID!, $username: String, $email: String, $password: String) {
-    editMemberProfile(uuid: $uuid, username: $username, email: $email, password: $password) {
+  mutation EditMemberProfile($username: String, $email: String, $password: String) {
+    editMemberProfile(username: $username, email: $email, password: $password) {
       uuid username email groupId createdAt
     }
   }
@@ -587,10 +601,11 @@ const GET_TASKS = `
   }
 `;
 
-// Use this for a member's "my tasks" screen instead of GET_TASKS — no auth needed
+// Use this for a member's "my tasks" screen instead of GET_TASKS. Requires the member's
+// bearer token on the request (Authorization header) — see MEMBER_SECURITY_INTEGRATION.md.
 const GET_TASKS_FOR_MEMBER = `
-  query GetTasksForMember($memberUuid: ID!) {
-    tasksForMember(memberUuid: $memberUuid) {
+  query GetTasksForMember {
+    tasksForMember {
       id clientId clientName taskName taskDescription serviceId
       assignedMembers assignedUsers dueDate createdBy priority statusId departmentId groupId liveLink source createdAt recurringTaskId
       submission { link note submittedBy submittedAt }
@@ -680,6 +695,10 @@ const EDIT_TASK = `
     }
   }
 `;
+// editTask accepts EITHER a user session OR a member bearer token (whichever your screen
+// has) — send it the same way you'd send any other authenticated request. See
+// MEMBER_SECURITY_INTEGRATION.md; unauthenticated calls are now rejected either way.
+//
 // This is how you change a task's status — pass whichever taskStatuses.id the
 // user picked. There's no dedicated "set status" mutation; it's just a field edit.
 // Same pattern for department — pass whichever departments.id it belongs to, or
@@ -698,12 +717,14 @@ const DELETE_TASK = `
   }
 `;
 
-// Member records/updates their submitted work; memberUuid must be in the task's
-// assignedMembers. Callable anytime, any number of times — not gated by status,
-// and doesn't change statusId itself.
+// Member records/updates their submitted work; the caller must be in the task's
+// assignedMembers (checked server-side against the token identity, not a client-supplied
+// uuid — see MEMBER_SECURITY_INTEGRATION.md). Requires the member's bearer token on the
+// request. Callable anytime, any number of times — not gated by status, and doesn't
+// change statusId itself.
 const SUBMIT_TASK = `
-  mutation SubmitTask($taskId: ID!, $memberUuid: ID!, $link: String!, $note: String) {
-    submitTask(taskId: $taskId, memberUuid: $memberUuid, link: $link, note: $note) {
+  mutation SubmitTask($taskId: ID!, $link: String!, $note: String) {
+    submitTask(taskId: $taskId, link: $link, note: $note) {
       id submission { link note submittedBy submittedAt }
     }
   }

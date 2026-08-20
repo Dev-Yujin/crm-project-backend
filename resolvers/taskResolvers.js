@@ -7,7 +7,7 @@ import {
     submitTask,
     reviewTask,
 } from '../models/task.js';
-import { requireUser, requireGroup } from '../utils/requireUser.js';
+import { requireUser, requireGroup, requireMember, requireCallerGroupId } from '../utils/requireUser.js';
 
 const mapSubmission = (submission) => submission && {
     link: submission.link,
@@ -53,8 +53,12 @@ const taskResolvers = {
             const tasks = await getAllTasks(groupId);
             return tasks.map(mapTask);
         },
-        tasksForMember: async (_, { memberUuid }) => {
-            const tasks = await getTasksForMember(memberUuid);
+        // memberUuid arg is accepted for backward compatibility but ignored — identity comes
+        // from the caller's own verified member token, never from client input. See
+        // SECURITY_BACKEND_ACTION_PLAN.md #2.
+        tasksForMember: async (_, __, context) => {
+            const member = requireMember(context);
+            const tasks = await getTasksForMember(member.uuid);
             return tasks.map(mapTask);
         },
     },
@@ -65,9 +69,12 @@ const taskResolvers = {
             const task = await addTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, user.id, priority, null, statusId, departmentId, groupId, liveLink, source, assignedUsers);
             return mapTask(task);
         },
-        // Member action: no bearer auth (members have no login mechanism yet) — same as submitTask
-        editTask: async (_, { taskId, ...updates }) => {
-            const task = await editTask(taskId, updates);
+        // Called by both actor types: a user editing any task in their group (clientId,
+        // assignedMembers, departmentId, ...) and a member updating their own assigned task.
+        // Either auth works; scoped to the caller's own group either way.
+        editTask: async (_, { taskId, ...updates }, context) => {
+            const callerGroupId = requireCallerGroupId(context);
+            const task = await editTask(taskId, updates, callerGroupId);
             return mapTask(task);
         },
         deleteTask: async (_, { taskId }, context) => {
@@ -75,10 +82,19 @@ const taskResolvers = {
             const task = await deleteTask(taskId, groupId);
             return mapTask(task);
         },
-        // Member action: no bearer auth (members have no login mechanism yet),
-        // memberUuid is self-declared and checked against the task's assignedMembers
-        submitTask: async (_, { taskId, memberUuid, link, note }) => {
-            const task = await submitTask(taskId, memberUuid, link, note);
+        // Called by both actor types: a user (admin) recording a submission on behalf of
+        // one of the task's assignees — memberUuid arg is required and meaningful here —
+        // or a member submitting their OWN work, where memberUuid is ignored and identity
+        // comes from their token instead. Either way the model checks the caller is among
+        // the task's assignedMembers and that the task belongs to the caller's own group.
+        submitTask: async (_, { taskId, memberUuid, link, note }, context) => {
+            if (context?.user) {
+                const groupId = requireGroup(context);
+                const task = await submitTask(taskId, memberUuid, link, note, groupId);
+                return mapTask(task);
+            }
+            const member = requireMember(context);
+            const task = await submitTask(taskId, member.uuid, link, note, member.group_id);
             return mapTask(task);
         },
         reviewTask: async (_, { taskId, comment }, context) => {

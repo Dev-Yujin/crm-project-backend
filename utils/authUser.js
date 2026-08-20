@@ -23,9 +23,9 @@ export async function comparePasswords(plainPassword, hashedPassword) {
 
 export function generateMemberToken(member) {
   return jwt.sign(
-    { uuid: member.uuid, username: member.username, email: member.email },
+    { uuid: member.uuid, username: member.username, email: member.email, tokenVersion: member.token_version ?? 0 },
     MEMBER_JWT_SECRET,
-    { expiresIn: '7d' }
+    { expiresIn: '1d' }
   );
 }
 

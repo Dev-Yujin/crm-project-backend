@@ -1,11 +1,14 @@
 import { pool } from '../config/supabase.js';
 import { hashPassword, comparePasswords, generateMemberToken, verifyMemberToken } from '../utils/authUser.js';
+import { checkRateLimit } from '../utils/rateLimit.js';
 //Add, Delete, Edit Profile, and Login functions for CRM members — scoped per group
 
 //Login function
 export const loginMember = async (email, password) => {
+    checkRateLimit(`loginMember:${email.toLowerCase()}`);
+
     try {
-        const query = 'SELECT uuid, username, email, password, group_id FROM members WHERE email = $1';
+        const query = 'SELECT uuid, username, email, password, group_id, token_version FROM members WHERE email = $1';
         const result = await pool.query(query, [email]);
 
         if (result.rows.length === 0) {
@@ -20,27 +23,55 @@ export const loginMember = async (email, password) => {
         }
 
         const token = generateMemberToken(member);
-        return { member, token };
+        const { token_version, ...memberWithoutTokenVersion } = member;
+        return { member: memberWithoutTokenVersion, token };
     } catch (error) {
         console.error('Error logging in member:', error);
         throw error;
     }
 };
 
-//Fetch the currently logged-in member from their token
+//Verify a member's bearer token: checks the signature/expiry AND that its embedded
+//tokenVersion still matches the row (bumping token_version invalidates every outstanding
+//token for that member — see revokeMemberSessions).
 export const fetchMemberFromToken = async (token) => {
     try {
         const decoded = verifyMemberToken(token);
-        const query = 'SELECT uuid, username, email, group_id, created_at FROM members WHERE uuid = $1';
+        const query = 'SELECT uuid, username, email, group_id, created_at, token_version FROM members WHERE uuid = $1';
         const result = await pool.query(query, [decoded.uuid]);
 
         if (result.rows.length === 0) {
             throw new Error('Member not found');
         }
 
-        return result.rows[0];
+        const member = result.rows[0];
+
+        if ((decoded.tokenVersion ?? 0) !== member.token_version) {
+            throw new Error('Token has been revoked');
+        }
+
+        const { token_version, ...memberWithoutTokenVersion } = member;
+        return memberWithoutTokenVersion;
     } catch (error) {
         console.error('Error fetching member from token:', error);
+        throw error;
+    }
+};
+
+//Bump a member's token_version, invalidating every outstanding token for them. Caller must
+//verify group ownership before calling this (see revokeMemberSessions resolver).
+export const revokeMemberSessions = async (uuid, groupId) => {
+    try {
+        const query = 'UPDATE members SET token_version = token_version + 1 WHERE uuid = $1 AND group_id = $2 RETURNING uuid';
+        const result = await pool.query(query, [uuid, groupId]);
+
+        if (result.rows.length === 0) {
+            throw new Error('Member not found');
+        }
+
+        return true;
+    } catch (error) {
+        console.error('Error revoking member sessions:', error);
         throw error;
     }
 };
@@ -88,8 +119,12 @@ export const deleteMember = async (uuid, groupId) => {
     }
 };
 
-//Edit member profile function (a member updates their own username/email/password)
-export const editMemberProfile = async (uuid, { username, email, password } = {}) => {
+//Edit a member's profile. Called by both actor types:
+//  - a member editing their OWN profile: uuid must come from their verified token (resolver
+//    passes caller.uuid, never client input), groupId omitted (self-edit needs no extra check)
+//  - a user (admin) editing a member they manage: groupId is required and enforced here, so
+//    an admin can't reach into another group's member by guessing a uuid
+export const editMemberProfile = async (uuid, { username, email, password } = {}, groupId = null) => {
     try {
         const fields = [];
         const values = [];
@@ -106,6 +141,9 @@ export const editMemberProfile = async (uuid, { username, email, password } = {}
         if (password !== undefined) {
             fields.push(`password = $${i++}`);
             values.push(await hashPassword(password));
+            //Changing the password invalidates every other outstanding token for this member —
+            //including one forced by an admin resetting it on their behalf.
+            fields.push(`token_version = token_version + 1`);
         }
 
         if (fields.length === 0) {
@@ -113,7 +151,14 @@ export const editMemberProfile = async (uuid, { username, email, password } = {}
         }
 
         values.push(uuid);
-        const query = `UPDATE members SET ${fields.join(', ')} WHERE uuid = $${i} RETURNING uuid, username, email, group_id, created_at`;
+        let query = `UPDATE members SET ${fields.join(', ')} WHERE uuid = $${i}`;
+
+        if (groupId != null) {
+            values.push(groupId);
+            query += ` AND group_id = $${i + 1}`;
+        }
+
+        query += ' RETURNING uuid, username, email, group_id, created_at';
         const result = await pool.query(query, values);
 
         if (result.rows.length === 0) {

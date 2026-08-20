@@ -14,9 +14,12 @@
   "type": "module",
   "dependencies": {
     "@apollo/server": "^5.5.1",
+    "@as-integrations/express5": "^1.1.2",
     "@supabase/supabase-js": "^2.110.5",
     "bcrypt": "^6.0.0",
+    "cookie-parser": "^1.4.7",
     "dotenv": "^17.4.2",
+    "express": "^5.2.1",
     "firebase": "^12.16.0",
     "graphql": "^16.14.2",
     "jsonwebtoken": "^9.0.3",

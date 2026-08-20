@@ -45,7 +45,8 @@ const taskTypeDefs = `#graphql
 
   type Query {
     tasks: [Task!]!
-    tasksForMember(memberUuid: ID!): [Task!]!
+    "Requires a member bearer token. memberUuid arg is accepted for backward compatibility but ignored — identity always comes from the token."
+    tasksForMember(memberUuid: ID): [Task!]!
   }
 
   type Mutation {
@@ -81,7 +82,8 @@ const taskTypeDefs = `#graphql
       assignedUsers: [ID!]
     ): Task!
     deleteTask(taskId: ID!): Task!
-    submitTask(taskId: ID!, memberUuid: ID!, link: String!, note: String): Task!
+    "For a user (admin): memberUuid is required — who the submission is on behalf of. For a member: memberUuid is ignored, always the caller."
+    submitTask(taskId: ID!, memberUuid: ID, link: String!, note: String): Task!
     reviewTask(taskId: ID!, comment: String!): Task!
   }
 `;

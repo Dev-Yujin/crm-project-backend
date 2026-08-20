@@ -9,21 +9,27 @@ const memberTypeDefs = `#graphql
     inviteError: String
   }
 
+  "token is set as an httpOnly cookie (see MEMBER_SECURITY_INTEGRATION.md) — never returned here"
   type MemberAuthPayload {
     member: Member!
-    token: String!
   }
 
   type Query {
     members: [Member!]!
-    currentMember(token: String!): Member
+    "Prefers the Authorization header; token arg is a fallback for un-migrated callers."
+    currentMember(token: String): Member
   }
 
   type Mutation {
     addMember(username: String!, email: String!, password: String!, sendInvite: Boolean): Member!
     deleteMember(uuid: ID!): Member!
-    editMemberProfile(uuid: ID!, username: String, email: String, password: String): Member!
+    "For a user (admin): uuid is required, edits a member in the caller's own group. For a member: uuid is ignored, always edits the caller's own profile."
+    editMemberProfile(uuid: ID, username: String, email: String, password: String): Member!
     loginMember(email: String!, password: String!): MemberAuthPayload!
+    "Clears the member auth cookie server-side."
+    logoutMember: Boolean!
+    "Admin (user) action: invalidates every outstanding token this member holds."
+    revokeMemberSessions(uuid: ID!): Boolean!
   }
 `;
 

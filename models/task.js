@@ -181,14 +181,14 @@ export const deleteTask = async (taskId, groupId) => {
 };
 
 //Edit a task's details, including freely setting its statusId — there is no fixed workflow gating this.
-//This is a member action (no bearer auth) same as submitTask, so there's no caller-supplied groupId to check
-//against — the task's own stored groupId is used to scope any cross-reference validation instead.
-export const editTask = async (taskId, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId, liveLink, source, assignedUsers } = {}) => {
+//This is a member action (member bearer auth, not a user session) — callerGroupId comes from the
+//member's own verified token and must match the task's stored groupId, or the task is treated as not found.
+export const editTask = async (taskId, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId, liveLink, source, assignedUsers } = {}, callerGroupId) => {
     try {
         const taskRef = ref(db, `tasks/${taskId}`);
         const taskSnapshot = await get(taskRef);
 
-        if (!taskSnapshot.exists()) {
+        if (!taskSnapshot.exists() || taskSnapshot.val().groupId !== callerGroupId) {
             throw new Error("Task not found");
         }
 
@@ -250,13 +250,17 @@ export const editTask = async (taskId, { clientId, clientName, taskName, taskDes
     }
 };
 
-//A member records their submitted work on a task (link + optional note). Callable anytime by an assigned member — not gated by status.
-export const submitTask = async (taskId, memberUuid, link, note = null) => {
+//Records a submitted work item (link + optional note) on a task, on behalf of memberUuid.
+//Callable anytime by an assigned member — not gated by status. Called by both actor types:
+//a member submitting their OWN work (memberUuid comes from their token) and a user (admin)
+//recording a submission on behalf of one of the task's assignees. callerGroupId is required
+//either way and must match the task's own group.
+export const submitTask = async (taskId, memberUuid, link, note = null, callerGroupId) => {
     try {
         const taskRef = ref(db, `tasks/${taskId}`);
         const taskSnapshot = await get(taskRef);
 
-        if (!taskSnapshot.exists()) {
+        if (!taskSnapshot.exists() || taskSnapshot.val().groupId !== callerGroupId) {
             throw new Error("Task not found");
         }
 

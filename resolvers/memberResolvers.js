@@ -5,10 +5,12 @@ import {
     editMemberProfile,
     loginMember,
     fetchMemberFromToken,
+    revokeMemberSessions,
 } from '../models/membersFunction.js';
 import { getDecryptedEmailCredentials } from '../models/emailCredentials.js';
 import { sendMemberInviteEmail } from '../utils/mailer.js';
-import { requireUser, requireGroup } from '../utils/requireUser.js';
+import { requireUser, requireGroup, requireMember } from '../utils/requireUser.js';
+import { MEMBER_COOKIE_NAME, memberCookieOptions } from '../utils/memberCookie.js';
 import { GraphQLError } from 'graphql';
 
 const mapMember = (row) => row && {
@@ -26,15 +28,32 @@ const memberResolvers = {
             const members = await getAllMembers(groupId);
             return members.map(mapMember);
         },
-        currentMember: async (_, { token }) => {
+        // Prefers the Authorization header (see server.js context); the `token` argument is
+        // accepted only as a fallback for callers not yet migrated to the header — see
+        // SECURITY_BACKEND_ACTION_PLAN.md #4.
+        currentMember: async (_, { token }, context) => {
+            if (context?.member) {
+                return mapMember(context.member);
+            }
+            if (!token) {
+                return null;
+            }
             const member = await fetchMemberFromToken(token);
             return mapMember(member);
         },
     },
     Mutation: {
-        loginMember: async (_, { email, password }) => {
+        // The token is set as an httpOnly cookie, never returned in the response body —
+        // page JavaScript (and anything that might run via XSS) can't read it, so there's
+        // nothing for a browser client to store. See MEMBER_SECURITY_INTEGRATION.md.
+        loginMember: async (_, { email, password }, context) => {
             const { member, token } = await loginMember(email, password);
-            return { member: mapMember(member), token };
+            context.res.cookie(MEMBER_COOKIE_NAME, token, memberCookieOptions());
+            return { member: mapMember(member) };
+        },
+        logoutMember: async (_, __, context) => {
+            context.res.clearCookie(MEMBER_COOKIE_NAME, memberCookieOptions());
+            return true;
         },
         addMember: async (_, { username, email, password, sendInvite }, context) => {
             const user = requireUser(context);
@@ -80,9 +99,23 @@ const memberResolvers = {
             const member = await deleteMember(uuid, groupId);
             return mapMember(member);
         },
-        editMemberProfile: async (_, { uuid, username, email, password }) => {
-            const member = await editMemberProfile(uuid, { username, email, password });
+        // Called by both actor types: a user (admin) editing a member they manage — uuid arg
+        // is required and scoped to the caller's own group — or a member editing their OWN
+        // profile, where the uuid arg is ignored and identity comes from their token instead.
+        editMemberProfile: async (_, { uuid, username, email, password }, context) => {
+            if (context?.user) {
+                const groupId = requireGroup(context);
+                const member = await editMemberProfile(uuid, { username, email, password }, groupId);
+                return mapMember(member);
+            }
+            const caller = requireMember(context);
+            const member = await editMemberProfile(caller.uuid, { username, email, password });
             return mapMember(member);
+        },
+        // Admin action: force-logout a member by invalidating every outstanding token they hold.
+        revokeMemberSessions: async (_, { uuid }, context) => {
+            const groupId = requireGroup(context);
+            return revokeMemberSessions(uuid, groupId);
         },
     },
 };
