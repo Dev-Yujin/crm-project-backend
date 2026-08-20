@@ -34,21 +34,6 @@ export const loginUser = async (email, password) => {
     return data;
 };
 
-//Google OAuth sign in/sign up (returns the URL to redirect the user to)
-export const signInWithGoogle = async (redirectTo) => {
-    const { data, error } = await supabaseAuth.auth.signInWithOAuth({
-        provider: 'google',
-        options: { redirectTo },
-    });
-
-    if (error) {
-        console.error('Error starting Google sign in:', error.message);
-        throw error;
-    }
-
-    return data;
-};
-
 //Fetch the currently authenticated user from an access token
 export const fetchCurrentUser = async (accessToken) => {
     const { data, error } = await supabaseAuth.auth.getUser(accessToken);

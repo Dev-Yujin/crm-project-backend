@@ -29,6 +29,7 @@ import { fetchCurrentUser } from './models/userFunctions.js';
 import { fetchUserGroupId } from './utils/groups.js';
 import { fetchMemberFromToken } from './models/membersFunction.js';
 import { MEMBER_COOKIE_NAME } from './utils/memberCookie.js';
+import { createRequestSupabaseClient } from './utils/supabaseServerClient.js';
 import { startScheduler } from './utils/scheduler.js';
 
 const app = express();
@@ -43,10 +44,28 @@ const server = new ApolloServer({
 await server.start();
 startScheduler();
 
-// Member auth resolves in this order: httpOnly cookie (the browser member portal) first,
-// then an Authorization header bearer token (non-browser callers — scripts, tools; the
-// public API no longer hands out a raw token for browsers to store, see loginMember).
-const resolveContext = async (req) => {
+// Auth resolves in this order:
+//   1. Supabase session cookie (the browser admin app) — via @supabase/ssr, which also
+//      transparently refreshes an expired access token using the cookie's refresh token
+//      and re-sets the cookies on this same response when it does.
+//   2. Member session cookie (the browser member portal).
+//   3. Authorization header bearer token (non-browser callers — scripts, tools). Accepts
+//      either a member token or a raw Supabase access token; the public API no longer
+//      hands either one to a browser to store, see loginMember/loginUser.
+const resolveContext = async (req, res) => {
+  const supabase = createRequestSupabaseClient(req, res);
+  const { data: { user: supabaseUser } } = await supabase.auth.getUser();
+
+  if (supabaseUser) {
+    try {
+      const groupId = await fetchUserGroupId(supabaseUser.id);
+      return { user: supabaseUser, groupId, member: null };
+    } catch {
+      // no group row yet — still authenticated, just ungated (requireGroup handles this)
+      return { user: supabaseUser, groupId: null, member: null };
+    }
+  }
+
   const cookieToken = req.cookies?.[MEMBER_COOKIE_NAME] ?? null;
 
   if (cookieToken) {
@@ -88,15 +107,55 @@ const allowedOrigins = (process.env.FRONTEND_ORIGIN ?? 'http://localhost:5173')
   .map((origin) => origin.trim())
   .filter(Boolean);
 
+const port = process.env.PORT ?? 4000;
+const backendUrl = process.env.PUBLIC_BACKEND_URL ?? `http://localhost:${port}`;
+const frontendUrl = allowedOrigins[0];
+
+app.use(cors({ origin: allowedOrigins, credentials: true }));
+app.use(cookieParser());
+
+// Google OAuth, mediated entirely server-side (PKCE) so the session is only ever handed to
+// the browser as an httpOnly cookie — the browser's own JS never sees an access/refresh
+// token or the OAuth code at any point. Requires this callback URL to be added to the
+// Supabase project's Authentication -> URL Configuration -> Redirect URLs allowlist; see
+// ADMIN_SESSION_SECURITY_INTEGRATION.md.
+app.get('/auth/google', async (req, res) => {
+  const supabase = createRequestSupabaseClient(req, res);
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: `${backendUrl}/auth/google/callback` },
+  });
+
+  if (error || !data?.url) {
+    return res.redirect(`${frontendUrl}/login?error=oauth_start_failed`);
+  }
+
+  res.redirect(data.url);
+});
+
+app.get('/auth/google/callback', async (req, res) => {
+  const code = typeof req.query.code === 'string' ? req.query.code : null;
+
+  if (!code) {
+    return res.redirect(`${frontendUrl}/login?error=oauth_no_code`);
+  }
+
+  const supabase = createRequestSupabaseClient(req, res);
+  const { error } = await supabase.auth.exchangeCodeForSession(code);
+
+  if (error) {
+    return res.redirect(`${frontendUrl}/login?error=oauth_exchange_failed`);
+  }
+
+  res.redirect(`${frontendUrl}/app`);
+});
+
 app.use(
-  cors({ origin: allowedOrigins, credentials: true }),
   express.json(),
-  cookieParser(),
   expressMiddleware(server, {
-    context: async ({ req, res }) => ({ ...(await resolveContext(req)), res }),
+    context: async ({ req, res }) => ({ ...(await resolveContext(req, res)), res, req }),
   })
 );
 
-const port = process.env.PORT ?? 4000;
 await new Promise((resolve) => httpServer.listen({ port }, resolve));
 console.log(`🚀 Server ready at http://localhost:${port}/`);

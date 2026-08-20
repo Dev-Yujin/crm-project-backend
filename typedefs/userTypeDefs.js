@@ -1,12 +1,12 @@
 const userTypeDefs = `#graphql
   type Query {
-    currentUser(accessToken: String!): User
+    "Cookie-based — resolves the caller's own Supabase session. accessToken arg is a fallback for non-browser callers (scripts, tests); the browser app never needs to pass it."
+    currentUser(accessToken: String): User
   }
 
   type Mutation {
     registerUser(name: String!, email: String!, password: String!): AuthPayload!
     loginUser(email: String!, password: String!): AuthPayload!
-    signInWithGoogle(redirectTo: String): OAuthPayload!
     signOutUser: Boolean!
   }
 
@@ -16,20 +16,9 @@ const userTypeDefs = `#graphql
     name: String
   }
 
-  type AuthSession {
-    accessToken: String
-    refreshToken: String
-    expiresAt: Int
-  }
-
+  "No session field — the session is set as an httpOnly cookie on the response instead. See ADMIN_SESSION_SECURITY_INTEGRATION.md. Google sign-in is a plain redirect to GET /auth/google on the API host, not a mutation."
   type AuthPayload {
     user: User
-    session: AuthSession
-  }
-
-  type OAuthPayload {
-    url: String!
-    provider: String!
   }
 `;
 

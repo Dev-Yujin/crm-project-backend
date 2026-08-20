@@ -21,6 +21,8 @@ Letting one admin assign a task to another admin (`Task.assignedUsers` / `Recurr
 
 **Breaking change, action required:** member-facing operations (`tasksForMember`, `editTask`, `submitTask`, `currentMember`, `editMemberProfile`) now require a member session, sent as an **httpOnly cookie** — `loginMember` no longer returns a token to store, and every member-portal fetch needs `credentials: 'include'`. See [MEMBER_SECURITY_INTEGRATION.md](./MEMBER_SECURITY_INTEGRATION.md) for exactly what changed. **Until the frontend sends `credentials: 'include'` as described there, these calls will fail with `UNAUTHENTICATED` for real members.**
 
+**Breaking change, action required:** the same fix now applies to the admin/user session too — Google sign-in and email/password login no longer go through `supabase-js` directly in the browser; the session is set as an httpOnly cookie by this backend instead. This also **requires a one-time Supabase dashboard change** (adding this backend's OAuth callback URL to the redirect allowlist) before Google sign-in works at all. See [ADMIN_SESSION_SECURITY_INTEGRATION.md](./ADMIN_SESSION_SECURITY_INTEGRATION.md) for the required dashboard step and the exact frontend rewrite (`AuthContext.tsx`, `graphql.ts`, `lib/supabase.ts` deleted).
+
 There are two actors in this system:
 - **user** — a Supabase Auth account (owns login, Google sign-in). Required for all create/delete/review/management mutations.
 - **member** — a row in the `members` table, added by a user, with their own login (`loginMember`). Member-facing operations (`tasksForMember`, `editTask`, `submitTask`, `currentMember`, `editMemberProfile`) require a member session, carried as an httpOnly cookie — see [MEMBER_SECURITY_INTEGRATION.md](./MEMBER_SECURITY_INTEGRATION.md). A member inherits their group automatically from whoever added them (`addMember` stamps the creating user's group onto the new member).
@@ -31,99 +33,21 @@ The three **public catalog queries** members rely on without logging in — `ser
 
 ## 1. Setup
 
-```bash
-npm install @supabase/supabase-js
-```
-
 `.env` (Vite requires the `VITE_` prefix):
 
 ```
-VITE_SUPABASE_URL=https://aapqxpauzjkeqjjjziyj.supabase.co
-VITE_SUPABASE_ANON_KEY=<the anon public key>
 VITE_GRAPHQL_URL=http://<your-ip>:4000/
 ```
 
-The anon key is safe to expose in frontend code — it's designed for that.
+That's the only one needed now — see §2.
 
 ---
 
-## 2. Google Sign In / Sign Up
+## 2. Admin sign-in (Google + email/password)
 
-Same button does both — the first time a Google account is used it's a sign-up, every time after that it's a sign-in. Supabase Auth handles this distinction automatically.
+**This used to describe calling `supabase-js` directly in the browser, with the session in `localStorage`. That's been replaced** — the session is now an httpOnly cookie this backend sets, and the whole flow (including Google OAuth) is mediated server-side. Full rewrite instructions (exact `AuthContext.tsx`, `graphql.ts`, and file deletions) are in [ADMIN_SESSION_SECURITY_INTEGRATION.md](./ADMIN_SESSION_SECURITY_INTEGRATION.md) — **that doc also has a required one-time Supabase dashboard step** (registering this backend's OAuth callback URL) that has to happen before Google sign-in works at all, in any environment.
 
-**`src/lib/supabase.ts`**
-```ts
-import { createClient } from '@supabase/supabase-js';
-
-export const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
-);
-```
-
-**Trigger the Google flow** (e.g. on a button click)
-```ts
-async function signInWithGoogle() {
-  const { error } = await supabase.auth.signInWithOAuth({
-    provider: 'google',
-    options: { redirectTo: window.location.origin + '/auth/callback' },
-  });
-  if (error) console.error(error.message);
-  // Browser now redirects to Google's consent screen, then back to redirectTo.
-}
-```
-
-**Redirect target must be allow-listed in Supabase.** Whatever URL you pass as `redirectTo` (e.g. `https://yourapp.com/auth/callback` or `http://localhost:5173/auth/callback`) has to be added in **Supabase Dashboard → Authentication → URL Configuration → Redirect URLs**, or Google will reject the request with `redirect_uri_mismatch`.
-
-**Capture the session on the redirect page** (`/auth/callback` route, runs once on mount)
-```ts
-import { useEffect } from 'react';
-
-function AuthCallback() {
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        // session.access_token -> store it / use for GraphQL calls
-        // redirect to your app's main page
-      }
-    });
-  }, []);
-
-  return <p>Signing you in...</p>;
-}
-```
-
-**Watch session changes anywhere in the app** (put this in an auth context provider at the root)
-```ts
-useEffect(() => {
-  const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-    // update your stored access token / user state here
-  });
-  return () => subscription.unsubscribe();
-}, []);
-```
-
-**Sign out**
-```ts
-await supabase.auth.signOut();
-```
-
-### Email/password sign up & sign in
-
-Same `supabase` client, different methods — useful if you want a non-Google option too:
-```ts
-// Sign up
-const { data, error } = await supabase.auth.signUp({
-  email,
-  password,
-  options: { data: { name } }, // stored in user_metadata
-});
-// data.session is null until the user confirms their email (Supabase default)
-
-// Sign in
-const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-// data.session.access_token -> use as Bearer token for GraphQL
-```
+The short version: `signInWithGoogle()` becomes a plain `window.location.href` navigation to `GET /auth/google` on the API host (not a `supabase-js` call); email/password go through the `loginUser`/`registerUser` GraphQL mutations (not `supabase.auth.signInWithPassword`/`signUp`); session restore on app load is a `currentUser` query, not `supabase.auth.getSession()`. `@supabase/supabase-js` and `src/lib/supabase.ts` are no longer needed in the frontend at all.
 
 ---
 
