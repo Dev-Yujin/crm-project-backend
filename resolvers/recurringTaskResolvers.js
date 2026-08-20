@@ -22,6 +22,7 @@ const mapRecurringTask = (template) => template && {
     active: template.active,
     lastRunAt: template.lastRunAt != null ? String(template.lastRunAt) : null,
     nextRunAt: template.nextRunAt != null ? String(template.nextRunAt) : null,
+    departmentId: template.departmentId ?? null,
     groupId: template.groupId,
 };
 
@@ -34,10 +35,10 @@ const recurringTaskResolvers = {
         },
     },
     Mutation: {
-        addRecurringTask: async (_, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, recurrence, priority, assignedUsers }, context) => {
+        addRecurringTask: async (_, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, recurrence, priority, assignedUsers, departmentId }, context) => {
             const user = requireUser(context);
             const groupId = requireGroup(context);
-            const template = await addRecurringTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, user.id, recurrence, priority, groupId, assignedUsers);
+            const template = await addRecurringTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, user.id, recurrence, priority, groupId, assignedUsers, departmentId);
             return mapRecurringTask(template);
         },
         deleteRecurringTask: async (_, { recurringTaskId }, context) => {

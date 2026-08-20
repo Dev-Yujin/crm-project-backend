@@ -20,6 +20,7 @@ const recurringTaskTypeDefs = `#graphql
     active: Boolean!
     lastRunAt: String
     nextRunAt: String
+    departmentId: ID
     groupId: ID!
   }
 
@@ -38,6 +39,7 @@ const recurringTaskTypeDefs = `#graphql
       recurrence: Recurrence!
       priority: TaskPriority
       assignedUsers: [ID!]
+      departmentId: ID
     ): RecurringTask!
     deleteRecurringTask(recurringTaskId: ID!): Boolean!
     pauseRecurringTask(recurringTaskId: ID!): RecurringTask!

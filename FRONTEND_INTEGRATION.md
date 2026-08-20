@@ -17,6 +17,8 @@ Optionally emailing a new member their portal link + credentials when you `addMe
 
 Letting one admin assign a task to another admin (`Task.assignedUsers` / `RecurringTask.assignedUsers`, separate from the member-facing `assignedMembers`) is documented in [ADMIN_ASSIGNMENT_INTEGRATION.md](./ADMIN_ASSIGNMENT_INTEGRATION.md) — **deployed**, safe to flip the `TASK_ASSIGNED_USERS` feature flag.
 
+`RecurringTask.departmentId` — the department a template's generated tasks belong to — is documented in [RECURRING_DEPARTMENT_INTEGRATION.md](./RECURRING_DEPARTMENT_INTEGRATION.md) — **deployed**, safe to flip the `RECURRING_TASK_DEPARTMENT` feature flag.
+
 There are two actors in this system:
 - **user** — a Supabase Auth account (owns login, Google sign-in). Required for all create/delete/review/management mutations.
 - **member** — a row in the `members` table, added by a user. Members currently have **no login/session mechanism**, so member-facing mutations (`submitTask`, `editTask`) are unauthenticated and take a `memberUuid` argument directly. A member inherits their group automatically from whoever added them (`addMember` stamps the creating user's group onto the new member).

@@ -56,6 +56,7 @@ export interface RecurringTask {
   active: boolean;
   lastRunAt: string | null; // when the scheduler last generated an instance
   nextRunAt: string | null; // when it's next due
+  departmentId: string | null; // see RECURRING_DEPARTMENT_INTEGRATION.md
   groupId: string; // scoped to the caller's group, same as everything else — see "Groups" in FRONTEND_INTEGRATION.md
 }
 ```
@@ -75,7 +76,7 @@ const GET_RECURRING_TASKS = `
   query GetRecurringTasks {
     recurringTasks {
       id clientId clientName taskName taskDescription serviceId
-      assignedMembers assignedUsers priority recurrence createdBy active lastRunAt nextRunAt groupId
+      assignedMembers assignedUsers priority recurrence createdBy active lastRunAt nextRunAt departmentId groupId
     }
   }
 `;
@@ -91,6 +92,7 @@ const ADD_RECURRING_TASK = `
     $recurrence: Recurrence!
     $priority: TaskPriority
     $assignedUsers: [ID!]
+    $departmentId: ID
   ) {
     addRecurringTask(
       clientId: $clientId
@@ -102,8 +104,9 @@ const ADD_RECURRING_TASK = `
       recurrence: $recurrence
       priority: $priority
       assignedUsers: $assignedUsers
+      departmentId: $departmentId
     ) {
-      id taskName recurrence active nextRunAt groupId assignedMembers assignedUsers
+      id taskName recurrence active nextRunAt groupId assignedMembers assignedUsers departmentId
     }
   }
 `;
@@ -113,6 +116,8 @@ const ADD_RECURRING_TASK = `
 // assignedUsers is optional (admin ids, separate from assignedMembers) — the first generated
 // Task instance inherits it, and so does every instance the scheduler generates afterward.
 // See ADMIN_ASSIGNMENT_INTEGRATION.md.
+// departmentId is optional — the first generated Task instance inherits it, and so does every
+// instance the scheduler generates afterward. See RECURRING_DEPARTMENT_INTEGRATION.md.
 
 const PAUSE_RECURRING_TASK = `
   mutation PauseRecurringTask($recurringTaskId: ID!) {
