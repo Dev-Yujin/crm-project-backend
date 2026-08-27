@@ -2,6 +2,31 @@
   "rules": {
     ".read": true,
     ".write": false,
+
+    "groups": {
+      "$groupId": {
+        ".write": true
+      }
+    },
+    "meetingNotes": {
+      ".write": true
+    },
+    "calendarEntries": {
+      ".write": true
+    },
+    "notifications": {
+      ".write": true
+    },
+    "statusColors": {
+      ".write": true
+    },
+    "clientColors": {
+      ".write": true
+    },
+    "serviceColors": {
+      ".write": true
+    },
+
     "taskStatuses": {
       ".indexOn": ["groupId"]
     },
