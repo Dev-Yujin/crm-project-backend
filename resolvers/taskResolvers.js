@@ -40,6 +40,7 @@ const mapTask = (task) => task && {
     groupId: task.groupId,
     liveLink: task.liveLink ?? null,
     source: task.source ?? null,
+    notes: task.notes ?? null,
     createdAt: task.createdAt != null ? String(task.createdAt) : null,
     submission: mapSubmission(task.submission),
     revisions: (task.revisions ?? []).map(mapRevision),
@@ -63,10 +64,10 @@ const taskResolvers = {
         },
     },
     Mutation: {
-        addTask: async (_, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId, liveLink, source, assignedUsers }, context) => {
+        addTask: async (_, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId, liveLink, source, assignedUsers, notes }, context) => {
             const user = requireUser(context);
             const groupId = requireGroup(context);
-            const task = await addTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, user.id, priority, null, statusId, departmentId, groupId, liveLink, source, assignedUsers);
+            const task = await addTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, user.id, priority, null, statusId, departmentId, groupId, liveLink, source, assignedUsers, notes);
             return mapTask(task);
         },
         // Called by both actor types: a user editing any task in their group (clientId,
