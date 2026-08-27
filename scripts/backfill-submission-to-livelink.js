@@ -20,7 +20,7 @@
 // Run the dry run first, review the printed list, take a Firebase backup, then
 // run with --apply.
 
-import { getDatabase, ref, get, update } from "firebase/database";
+import { getDatabase } from "firebase-admin/database";
 import { app } from "../config/firebase.js";
 import { normalizeLiveLink } from "../models/task.js";
 
@@ -49,7 +49,7 @@ async function main() {
     const dbUrl = process.env.FIREBASE_DATABASE_URL;
     console.log(`Target database: ${dbUrl ?? "(FIREBASE_DATABASE_URL is not set!)"}`);
 
-    const snapshot = await get(ref(db, "tasks"));
+    const snapshot = await db.ref("tasks").once("value");
     const tasks = snapshot.val() ?? {};
 
     const needsLiveLink = [];
@@ -119,7 +119,7 @@ async function main() {
     for (const { id, task, linkResult } of plannedLiveLink) {
         const notesValue = task.submission.note ?? null;
         if (linkResult.ok) {
-            await update(ref(db, `tasks/${id}`), {
+            await db.ref(`tasks/${id}`).update({
                 liveLink: linkResult.value,
                 notes: notesValue,
                 submission: null,
@@ -127,7 +127,7 @@ async function main() {
             migratedCount++;
         } else {
             console.warn(`Skipping liveLink write for task ${id} (${task.taskName ?? "untitled"}): ${linkResult.reason}`);
-            await update(ref(db, `tasks/${id}`), {
+            await db.ref(`tasks/${id}`).update({
                 notes: notesValue,
             });
             skippedLinkCount++;
@@ -141,7 +141,7 @@ async function main() {
         if (notesValue != null) {
             updates.notes = notesValue;
         }
-        await update(ref(db, `tasks/${id}`), updates);
+        await db.ref(`tasks/${id}`).update(updates);
         notesOnlyCount++;
     }
 
