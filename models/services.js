@@ -1,4 +1,4 @@
-import { getDatabase, ref, push, set, get, remove, update } from "firebase/database";
+import { getDatabase } from "firebase-admin/database";
 import { app } from "../config/firebase.js";
 //The catalog of services the business offers (e.g. "Web Development", "Video Editing") — scoped per group
 
@@ -7,7 +7,7 @@ const db = getDatabase(app);
 //Fetch all services belonging to a group
 export const getAllServices = async (groupId) => {
     try {
-        const servicesSnapshot = await get(ref(db, "services"));
+        const servicesSnapshot = await db.ref("services").once("value");
         const servicesData = servicesSnapshot.val();
         const services = servicesData ? Object.entries(servicesData).map(([id, service]) => ({ id, ...service })) : [];
         return services.filter((service) => service.groupId === groupId);
@@ -20,9 +20,9 @@ export const getAllServices = async (groupId) => {
 //Add a new service to a group's catalog
 export const addService = async (name, groupId) => {
     try {
-        const servicesRef = ref(db, "services");
-        const newServiceRef = push(servicesRef);
-        await set(newServiceRef, { name, groupId });
+        const servicesRef = db.ref("services");
+        const newServiceRef = servicesRef.push();
+        await newServiceRef.set({ name, groupId });
         return { id: newServiceRef.key, name, groupId };
     } catch (error) {
         console.error("Error adding service:", error);
@@ -33,14 +33,14 @@ export const addService = async (name, groupId) => {
 //Update a service's name (must belong to the caller's group)
 export const updateService = async (serviceId, name, groupId) => {
     try {
-        const serviceRef = ref(db, `services/${serviceId}`);
-        const serviceSnapshot = await get(serviceRef);
+        const serviceRef = db.ref(`services/${serviceId}`);
+        const serviceSnapshot = await serviceRef.once("value");
 
         if (!serviceSnapshot.exists() || serviceSnapshot.val().groupId !== groupId) {
             throw new Error("Service not found");
         }
 
-        await update(serviceRef, { name });
+        await serviceRef.update({ name });
         return { id: serviceId, name, groupId };
     } catch (error) {
         console.error("Error updating service:", error);
@@ -51,14 +51,14 @@ export const updateService = async (serviceId, name, groupId) => {
 //Delete a service (must belong to the caller's group)
 export const deleteService = async (serviceId, groupId) => {
     try {
-        const serviceRef = ref(db, `services/${serviceId}`);
-        const serviceSnapshot = await get(serviceRef);
+        const serviceRef = db.ref(`services/${serviceId}`);
+        const serviceSnapshot = await serviceRef.once("value");
 
         if (!serviceSnapshot.exists() || serviceSnapshot.val().groupId !== groupId) {
             throw new Error("Service not found");
         }
 
-        await remove(serviceRef);
+        await serviceRef.remove();
         return { id: serviceId, ...serviceSnapshot.val() };
     } catch (error) {
         console.error("Error deleting service:", error);

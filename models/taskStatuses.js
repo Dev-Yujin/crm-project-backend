@@ -1,4 +1,4 @@
-import { getDatabase, ref, push, set, get, remove, update } from "firebase/database";
+import { getDatabase } from "firebase-admin/database";
 import { app } from "../config/firebase.js";
 //A user-managed catalog of task statuses (e.g. "Pending", "On Going", "Submitted", "Completed") — scoped per group
 //There is no fixed workflow — users define whatever statuses they want and set them freely on a task
@@ -8,7 +8,7 @@ const db = getDatabase(app);
 //Fetch all task statuses belonging to a group
 export const getAllTaskStatuses = async (groupId) => {
     try {
-        const snapshot = await get(ref(db, "taskStatuses"));
+        const snapshot = await db.ref("taskStatuses").once("value");
         const data = snapshot.val();
         const taskStatuses = data ? Object.entries(data).map(([id, taskStatus]) => ({ id, ...taskStatus })) : [];
         return taskStatuses.filter((taskStatus) => taskStatus.groupId === groupId);
@@ -21,9 +21,9 @@ export const getAllTaskStatuses = async (groupId) => {
 //Add a new task status to a group's catalog
 export const addTaskStatus = async (name, groupId) => {
     try {
-        const taskStatusesRef = ref(db, "taskStatuses");
-        const newTaskStatusRef = push(taskStatusesRef);
-        await set(newTaskStatusRef, { name, groupId });
+        const taskStatusesRef = db.ref("taskStatuses");
+        const newTaskStatusRef = taskStatusesRef.push();
+        await newTaskStatusRef.set({ name, groupId });
         return { id: newTaskStatusRef.key, name, groupId };
     } catch (error) {
         console.error("Error adding task status:", error);
@@ -34,14 +34,14 @@ export const addTaskStatus = async (name, groupId) => {
 //Update a task status's name (must belong to the caller's group)
 export const updateTaskStatus = async (taskStatusId, name, groupId) => {
     try {
-        const taskStatusRef = ref(db, `taskStatuses/${taskStatusId}`);
-        const snapshot = await get(taskStatusRef);
+        const taskStatusRef = db.ref(`taskStatuses/${taskStatusId}`);
+        const snapshot = await taskStatusRef.once("value");
 
         if (!snapshot.exists() || snapshot.val().groupId !== groupId) {
             throw new Error("Task status not found");
         }
 
-        await update(taskStatusRef, { name });
+        await taskStatusRef.update({ name });
         return { id: taskStatusId, name, groupId };
     } catch (error) {
         console.error("Error updating task status:", error);
@@ -52,14 +52,14 @@ export const updateTaskStatus = async (taskStatusId, name, groupId) => {
 //Delete a task status (must belong to the caller's group)
 export const deleteTaskStatus = async (taskStatusId, groupId) => {
     try {
-        const taskStatusRef = ref(db, `taskStatuses/${taskStatusId}`);
-        const snapshot = await get(taskStatusRef);
+        const taskStatusRef = db.ref(`taskStatuses/${taskStatusId}`);
+        const snapshot = await taskStatusRef.once("value");
 
         if (!snapshot.exists() || snapshot.val().groupId !== groupId) {
             throw new Error("Task status not found");
         }
 
-        await remove(taskStatusRef);
+        await taskStatusRef.remove();
         return { id: taskStatusId, ...snapshot.val() };
     } catch (error) {
         console.error("Error deleting task status:", error);
