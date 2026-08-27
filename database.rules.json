@@ -1,0 +1,21 @@
+{
+  "rules": {
+    ".read": true,
+    ".write": false,
+    "taskStatuses": {
+      ".indexOn": ["groupId"]
+    },
+    "tasks": {
+      ".indexOn": ["groupId"]
+    },
+    "clients": {
+      ".indexOn": ["groupId"]
+    },
+    "services": {
+      ".indexOn": ["groupId"]
+    },
+    "departments": {
+      ".indexOn": ["groupId"]
+    }
+  }
+}
