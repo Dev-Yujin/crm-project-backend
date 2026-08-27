@@ -54,6 +54,12 @@ const normalizeSource = (value) => {
     return trimmed === "" ? null : trimmed;
 };
 
+//Trims free text and stores null rather than "" — used for `notes`
+const normalizeNotes = (value) => {
+    const trimmed = value.trim();
+    return trimmed === "" ? null : trimmed;
+};
+
 //Trims and validates a URL — only http(s) is accepted (javascript:/data: URLs would be
 //an XSS vector, since the frontend renders liveLink as a clickable anchor)
 const normalizeLiveLink = (value) => {
@@ -102,7 +108,7 @@ export const getTasksForMember = async (memberUuid) => {
 //Add a new task (created by a user, assigned to one or more members, tied to one of the client's availed services)
 //statusId is optional and freely chosen from the user-managed task status catalog — there is no fixed workflow
 //recurringTaskId is set internally when a recurring task template generates an instance — not exposed on the public addTask mutation
-export const addTask = async (clientId, clientName, taskName, taskDescription, serviceId, assignedMembers = [], dueDate = null, createdBy, priority = TASK_PRIORITY.MEDIUM, recurringTaskId = null, statusId = null, departmentId = null, groupId, liveLink = null, source = null, assignedUsers = []) => {
+export const addTask = async (clientId, clientName, taskName, taskDescription, serviceId, assignedMembers = [], dueDate = null, createdBy, priority = TASK_PRIORITY.MEDIUM, recurringTaskId = null, statusId = null, departmentId = null, groupId, liveLink = null, source = null, assignedUsers = [], notes = null) => {
     try {
         await validateMembersExist(assignedMembers, groupId);
         await validateUsersExist(assignedUsers, groupId);
@@ -112,6 +118,7 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
 
         const normalizedLiveLink = liveLink != null ? normalizeLiveLink(liveLink) : null;
         const normalizedSource = source != null ? normalizeSource(source) : null;
+        const normalizedNotes = notes != null ? normalizeNotes(notes) : null;
         const dedupedAssignedUsers = [...new Set(assignedUsers ?? [])];
 
         const tasksRef = ref(db, "tasks");
@@ -133,6 +140,7 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
             groupId,
             liveLink: normalizedLiveLink,
             source: normalizedSource,
+            notes: normalizedNotes,
             createdAt: serverTimestamp(),
         });
 
@@ -154,6 +162,7 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
             groupId,
             liveLink: normalizedLiveLink,
             source: normalizedSource,
+            notes: normalizedNotes,
             revisions: [],
         };
     } catch (error) {
@@ -183,7 +192,7 @@ export const deleteTask = async (taskId, groupId) => {
 //Edit a task's details, including freely setting its statusId — there is no fixed workflow gating this.
 //This is a member action (member bearer auth, not a user session) — callerGroupId comes from the
 //member's own verified token and must match the task's stored groupId, or the task is treated as not found.
-export const editTask = async (taskId, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId, liveLink, source, assignedUsers } = {}, callerGroupId) => {
+export const editTask = async (taskId, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId, liveLink, source, notes, assignedUsers } = {}, callerGroupId) => {
     try {
         const taskRef = ref(db, `tasks/${taskId}`);
         const taskSnapshot = await get(taskRef);
@@ -223,6 +232,7 @@ export const editTask = async (taskId, { clientId, clientName, taskName, taskDes
         // Argument provided as null or "" -> clear the field.
         const normalizedLiveLink = liveLink !== undefined ? (liveLink == null ? null : normalizeLiveLink(liveLink)) : undefined;
         const normalizedSource = source !== undefined ? (source == null ? null : normalizeSource(source)) : undefined;
+        const normalizedNotes = notes !== undefined ? (notes == null ? null : normalizeNotes(notes)) : undefined;
 
         const updatedTaskData = {
             ...(clientId !== undefined && { clientId }),
@@ -237,6 +247,7 @@ export const editTask = async (taskId, { clientId, clientName, taskName, taskDes
             ...(departmentId !== undefined && { departmentId }),
             ...(liveLink !== undefined && { liveLink: normalizedLiveLink }),
             ...(source !== undefined && { source: normalizedSource }),
+            ...(notes !== undefined && { notes: normalizedNotes }),
             ...(assignedUsers !== undefined && { assignedUsers: [...new Set(assignedUsers ?? [])] }),
         };
 

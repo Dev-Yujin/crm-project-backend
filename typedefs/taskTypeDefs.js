@@ -37,6 +37,7 @@ const taskTypeDefs = `#graphql
     groupId: ID!
     liveLink: String
     source: String
+    notes: String
     createdAt: String
     submission: Submission
     revisions: [Revision!]!
@@ -63,6 +64,7 @@ const taskTypeDefs = `#graphql
       departmentId: ID
       liveLink: String
       source: String
+      notes: String
       assignedUsers: [ID!]
     ): Task!
     editTask(
@@ -79,6 +81,7 @@ const taskTypeDefs = `#graphql
       departmentId: ID
       liveLink: String
       source: String
+      notes: String
       assignedUsers: [ID!]
     ): Task!
     deleteTask(taskId: ID!): Task!
