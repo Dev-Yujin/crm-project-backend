@@ -1,4 +1,4 @@
-import { getDatabase, ref, push, set, get, remove, serverTimestamp } from "firebase/database";
+import { getDatabase, ServerValue } from "firebase-admin/database";
 import { app } from "../config/firebase.js";
 import { pool } from "../config/supabase.js";
 import { validateServicesExist } from "./services.js";
@@ -6,7 +6,7 @@ import { validateServicesExist } from "./services.js";
 //Fetch all clients belonging to a group
 export const getAllClients = async (groupId) => {
     try {
-        const clientsSnapshot = await get(ref(getDatabase(app), "clients"));
+        const clientsSnapshot = await getDatabase(app).ref("clients").once("value");
         const clientsData = clientsSnapshot.val();
         const clients = clientsData ? Object.entries(clientsData).map(([id, client]) => ({ id, ...client })) : [];
         return clients.filter((client) => client.groupId === groupId);
@@ -21,9 +21,9 @@ export const addClient = async (clientName, businessName, email, whatsappNumber 
     try {
         await validateServicesExist(servicesAvailed, groupId);
 
-        const clientsRef = ref(getDatabase(app), "clients");
-        const newClientRef = push(clientsRef);
-        await set(newClientRef, {
+        const clientsRef = getDatabase(app).ref("clients");
+        const newClientRef = clientsRef.push();
+        await newClientRef.set({
             clientName,
             businessName,
             email,
@@ -31,7 +31,7 @@ export const addClient = async (clientName, businessName, email, whatsappNumber 
             clientNotes,
             servicesAvailed,
             groupId,
-            createdAt: serverTimestamp(),
+            createdAt: ServerValue.TIMESTAMP,
         });
 
         return { id: newClientRef.key, clientName, businessName, email, whatsappNumber, clientNotes, servicesAvailed, groupId };
@@ -44,14 +44,14 @@ export const addClient = async (clientName, businessName, email, whatsappNumber 
 //Delete a client by their ID (must belong to the caller's group)
 export const deleteClient = async (clientId, groupId) => {
     try {
-        const clientRef = ref(getDatabase(app), `clients/${clientId}`);
-        const clientSnapshot = await get(clientRef);
+        const clientRef = getDatabase(app).ref(`clients/${clientId}`);
+        const clientSnapshot = await clientRef.once("value");
 
         if (!clientSnapshot.exists() || clientSnapshot.val().groupId !== groupId) {
             throw new Error("Client not found");
         }
 
-        await remove(clientRef);
+        await clientRef.remove();
         return { id: clientId, ...clientSnapshot.val() };
     } catch (error) {
         console.error("Error deleting client:", error);
@@ -62,8 +62,8 @@ export const deleteClient = async (clientId, groupId) => {
 //Edit a client's details by their ID (must belong to the caller's group)
 export const editClient = async (clientId, { clientName, businessName, email, whatsappNumber, clientNotes, servicesAvailed } = {}, groupId) => {
     try {
-        const clientRef = ref(getDatabase(app), `clients/${clientId}`);
-        const clientSnapshot = await get(clientRef);
+        const clientRef = getDatabase(app).ref(`clients/${clientId}`);
+        const clientSnapshot = await clientRef.once("value");
 
         if (!clientSnapshot.exists() || clientSnapshot.val().groupId !== groupId) {
             throw new Error("Client not found");
@@ -81,7 +81,7 @@ export const editClient = async (clientId, { clientName, businessName, email, wh
         if (clientNotes !== undefined) updatedData.clientNotes = clientNotes;
         if (servicesAvailed !== undefined) updatedData.servicesAvailed = servicesAvailed;
         const finalData = { ...clientSnapshot.val(), ...updatedData };
-        await set(clientRef, finalData);
+        await clientRef.set(finalData);
         return { id: clientId, ...finalData };
     } catch (error) {
         console.error("Error editing client:", error);
@@ -92,13 +92,13 @@ export const editClient = async (clientId, { clientName, businessName, email, wh
 //client inquiry function (a client sends an inquiry to the business) — not scoped by group, public contact form
 export const clientInquiry = async (clientName, email, message) => {
     try {
-        const inquiriesRef = ref(getDatabase(app), "inquiries");
-        const newInquiryRef = push(inquiriesRef);
-        await set(newInquiryRef, {
+        const inquiriesRef = getDatabase(app).ref("inquiries");
+        const newInquiryRef = inquiriesRef.push();
+        await newInquiryRef.set({
             clientName,
             email,
             message,
-            createdAt: serverTimestamp(),
+            createdAt: ServerValue.TIMESTAMP,
         });
 
         return { id: newInquiryRef.key, clientName, email, message };
