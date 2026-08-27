@@ -60,8 +60,10 @@ Expected output: `Appended GOOGLE_APPLICATION_CREDENTIALS_JSON to .env (<some nu
 
 Replace the full file contents with:
 
+> **Amended:** the code below uses `firebase-admin`'s modular API (`initializeApp`/`cert` from `firebase-admin/app`), not the older namespaced `admin.initializeApp()`/`admin.credential.cert()` style — the installed version (14.x) only exposes the modular surface on its default export (verified directly: `Object.keys((await import('firebase-admin')).default)` has no `credential` or `database` key). Every task in this plan that references Firebase now uses this same modular pattern — `getDatabase`/`ServerValue` from `firebase-admin/database`, not `admin.database()`.
+
 ```js
-import admin from "firebase-admin";
+import { initializeApp, cert } from "firebase-admin/app";
 import dotenv from "dotenv";
 import { fileURLToPath } from "url";
 import path from "path";
@@ -88,8 +90,8 @@ try {
 // bypasses RTDB security rules entirely, by design. This is what lets the
 // backend keep writing once rules are tightened to .write: false for everyone
 // else (see the design spec's rollout plan).
-export const app = admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
+export const app = initializeApp({
+  credential: cert(serviceAccount),
   databaseURL: process.env.FIREBASE_DATABASE_URL,
 });
 ```
@@ -107,8 +109,8 @@ Expected: no output (success).
 ```bash
 node -e "
 import('./config/firebase.js').then(async ({ app }) => {
-  const admin = (await import('firebase-admin')).default;
-  const snapshot = await admin.database(app).ref('taskStatuses').once('value');
+  const { getDatabase } = await import('firebase-admin/database');
+  const snapshot = await getDatabase(app).ref('taskStatuses').once('value');
   console.log('Connected via Admin SDK. Sample read returned', snapshot.exists() ? 'data' : 'no data', '— childCount:', snapshot.numChildren());
   process.exit(0);
 }).catch((err) => { console.error('FAILED:', err.message); process.exit(1); });
@@ -138,12 +140,12 @@ git commit -m "Migrate config/firebase.js to Firebase Admin SDK"
 - Consumes: `app` from Task 1 (a `firebase-admin` App).
 - Produces: unchanged — every exported function (`validateMembersExist`, `validateServiceForClient`, `normalizeLiveLink`, `getAllTasks`, `getTasksForMember`, `addTask`, `deleteTask`, `editTask`, `submitTask`, `reviewTask`, `TASK_PRIORITY`) keeps its exact same name, parameters, and return shape. `recurringTasks.js` (Task 3) imports `validateMembersExist`, `validateServiceForClient`, `addTask`, `TASK_PRIORITY` from this file and needs zero changes to those call sites.
 
-This is the API-shape translation used throughout this plan: the client SDK's modular functions (`get(ref(db, path))`, `set(ref, data)`, `update(ref, data)`, `remove(ref)`, `push(ref)`, `serverTimestamp()`) become Admin SDK method calls (`db.ref(path).once("value")`, `ref.set(data)`, `ref.update(data)`, `ref.remove()`, `ref.push()`, `admin.database.ServerValue.TIMESTAMP`). `snapshot.exists()` and `snapshot.val()` are unchanged in both SDKs.
+This is the API-shape translation used throughout this plan: the client SDK's modular functions (`get(ref(db, path))`, `set(ref, data)`, `update(ref, data)`, `remove(ref)`, `push(ref)`, `serverTimestamp()`) become Admin SDK method calls (`db.ref(path).once("value")`, `ref.set(data)`, `ref.update(data)`, `ref.remove()`, `ref.push()`, `ServerValue.TIMESTAMP`). `snapshot.exists()` and `snapshot.val()` are unchanged in both SDKs.
 
 - [ ] **Step 1: Replace the full file contents**
 
 ```js
-import admin from "firebase-admin";
+import { getDatabase, ServerValue } from "firebase-admin/database";
 import { app } from "../config/firebase.js";
 import { pool } from "../config/supabase.js";
 import { validateTaskStatusExists } from "./taskStatuses.js";
@@ -151,7 +153,7 @@ import { validateDepartmentExists } from "./departments.js";
 import { fetchMemberGroupId } from "../utils/groups.js";
 import { validateUsersExist } from "./groups.js";
 
-const db = admin.database(app);
+const db = getDatabase(app);
 
 export const TASK_PRIORITY = {
     LOW: "LOW",
@@ -286,7 +288,7 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
             liveLink: normalizedLiveLink,
             source: normalizedSource,
             notes: normalizedNotes,
-            createdAt: admin.database.ServerValue.TIMESTAMP,
+            createdAt: ServerValue.TIMESTAMP,
         });
 
         return {
@@ -430,7 +432,7 @@ export const submitTask = async (taskId, memberUuid, link, note = null, callerGr
             link,
             note,
             submittedBy: memberUuid,
-            submittedAt: admin.database.ServerValue.TIMESTAMP,
+            submittedAt: ServerValue.TIMESTAMP,
         };
 
         await taskRef.update({ submission });
@@ -464,7 +466,7 @@ export const reviewTask = async (taskId, reviewedBy, comment, groupId) => {
         await newRevisionRef.set({
             comment,
             reviewedBy,
-            reviewedAt: admin.database.ServerValue.TIMESTAMP,
+            reviewedAt: ServerValue.TIMESTAMP,
         });
 
         return {
@@ -513,7 +515,7 @@ git commit -m "Migrate models/task.js to Firebase Admin SDK"
 - [ ] **Step 1: Replace the full file contents**
 
 ```js
-import admin from "firebase-admin";
+import { getDatabase } from "firebase-admin/database";
 import { app } from "../config/firebase.js";
 import {
     validateMembersExist,
@@ -526,7 +528,7 @@ import { validateDepartmentExists } from "./departments.js";
 //Recurring task templates: on their schedule, the scheduler generates a fresh
 //one-off Task instance (via addTask) tagged with recurringTaskId
 
-const db = admin.database(app);
+const db = getDatabase(app);
 
 export const RECURRENCE = {
     DAILY: "DAILY",
@@ -739,11 +741,11 @@ These two files are structurally identical (a catalog CRUD pattern), so they're 
 - [ ] **Step 1: Replace `models/services.js`'s full contents**
 
 ```js
-import admin from "firebase-admin";
+import { getDatabase } from "firebase-admin/database";
 import { app } from "../config/firebase.js";
 //The catalog of services the business offers (e.g. "Web Development", "Video Editing") — scoped per group
 
-const db = admin.database(app);
+const db = getDatabase(app);
 
 //Fetch all services belonging to a group
 export const getAllServices = async (groupId) => {
@@ -826,12 +828,12 @@ export const validateServicesExist = async (serviceIds, groupId) => {
 - [ ] **Step 2: Replace `models/taskStatuses.js`'s full contents**
 
 ```js
-import admin from "firebase-admin";
+import { getDatabase } from "firebase-admin/database";
 import { app } from "../config/firebase.js";
 //A user-managed catalog of task statuses (e.g. "Pending", "On Going", "Submitted", "Completed") — scoped per group
 //There is no fixed workflow — users define whatever statuses they want and set them freely on a task
 
-const db = admin.database(app);
+const db = getDatabase(app);
 
 //Fetch all task statuses belonging to a group
 export const getAllTaskStatuses = async (groupId) => {
@@ -943,12 +945,12 @@ git commit -m "Migrate models/services.js and models/taskStatuses.js to Firebase
 - [ ] **Step 1: Replace the full file contents**
 
 ```js
-import admin from "firebase-admin";
+import { getDatabase, ServerValue } from "firebase-admin/database";
 import { app } from "../config/firebase.js";
 import { pool } from "../config/supabase.js";
 //Create a Department, and assign members (from the Postgres members table) to that Department — scoped per group
 
-const db = admin.database(app);
+const db = getDatabase(app);
 
 const mapMembers = (members) =>
     Object.entries(members ?? {}).map(([uuid, member]) => ({
@@ -966,7 +968,7 @@ export const addDepartment = async (name, groupId) => {
         await newDepartmentRef.set({
             name,
             groupId,
-            createdAt: admin.database.ServerValue.TIMESTAMP,
+            createdAt: ServerValue.TIMESTAMP,
         });
 
         return { id: newDepartmentRef.key, name, groupId };
@@ -1034,7 +1036,7 @@ export const addMemberToDepartment = async (departmentId, memberUuid, groupId) =
         await memberRef.set({
             username: member.username,
             email: member.email,
-            assignedAt: admin.database.ServerValue.TIMESTAMP,
+            assignedAt: ServerValue.TIMESTAMP,
         });
 
         return { departmentId, uuid: member.uuid, username: member.username, email: member.email };
@@ -1139,7 +1141,7 @@ This file's existing style calls `getDatabase(app)` inline at every call site (n
 - [ ] **Step 1: Replace the full file contents**
 
 ```js
-import admin from "firebase-admin";
+import { getDatabase, ServerValue } from "firebase-admin/database";
 import { app } from "../config/firebase.js";
 import { pool } from "../config/supabase.js";
 import { validateServicesExist } from "./services.js";
@@ -1147,7 +1149,7 @@ import { validateServicesExist } from "./services.js";
 //Fetch all clients belonging to a group
 export const getAllClients = async (groupId) => {
     try {
-        const clientsSnapshot = await admin.database(app).ref("clients").once("value");
+        const clientsSnapshot = await getDatabase(app).ref("clients").once("value");
         const clientsData = clientsSnapshot.val();
         const clients = clientsData ? Object.entries(clientsData).map(([id, client]) => ({ id, ...client })) : [];
         return clients.filter((client) => client.groupId === groupId);
@@ -1162,7 +1164,7 @@ export const addClient = async (clientName, businessName, email, whatsappNumber 
     try {
         await validateServicesExist(servicesAvailed, groupId);
 
-        const clientsRef = admin.database(app).ref("clients");
+        const clientsRef = getDatabase(app).ref("clients");
         const newClientRef = clientsRef.push();
         await newClientRef.set({
             clientName,
@@ -1172,7 +1174,7 @@ export const addClient = async (clientName, businessName, email, whatsappNumber 
             clientNotes,
             servicesAvailed,
             groupId,
-            createdAt: admin.database.ServerValue.TIMESTAMP,
+            createdAt: ServerValue.TIMESTAMP,
         });
 
         return { id: newClientRef.key, clientName, businessName, email, whatsappNumber, clientNotes, servicesAvailed, groupId };
@@ -1185,7 +1187,7 @@ export const addClient = async (clientName, businessName, email, whatsappNumber 
 //Delete a client by their ID (must belong to the caller's group)
 export const deleteClient = async (clientId, groupId) => {
     try {
-        const clientRef = admin.database(app).ref(`clients/${clientId}`);
+        const clientRef = getDatabase(app).ref(`clients/${clientId}`);
         const clientSnapshot = await clientRef.once("value");
 
         if (!clientSnapshot.exists() || clientSnapshot.val().groupId !== groupId) {
@@ -1203,7 +1205,7 @@ export const deleteClient = async (clientId, groupId) => {
 //Edit a client's details by their ID (must belong to the caller's group)
 export const editClient = async (clientId, { clientName, businessName, email, whatsappNumber, clientNotes, servicesAvailed } = {}, groupId) => {
     try {
-        const clientRef = admin.database(app).ref(`clients/${clientId}`);
+        const clientRef = getDatabase(app).ref(`clients/${clientId}`);
         const clientSnapshot = await clientRef.once("value");
 
         if (!clientSnapshot.exists() || clientSnapshot.val().groupId !== groupId) {
@@ -1233,13 +1235,13 @@ export const editClient = async (clientId, { clientName, businessName, email, wh
 //client inquiry function (a client sends an inquiry to the business) — not scoped by group, public contact form
 export const clientInquiry = async (clientName, email, message) => {
     try {
-        const inquiriesRef = admin.database(app).ref("inquiries");
+        const inquiriesRef = getDatabase(app).ref("inquiries");
         const newInquiryRef = inquiriesRef.push();
         await newInquiryRef.set({
             clientName,
             email,
             message,
-            createdAt: admin.database.ServerValue.TIMESTAMP,
+            createdAt: ServerValue.TIMESTAMP,
         });
 
         return { id: newInquiryRef.key, clientName, email, message };
@@ -1303,11 +1305,11 @@ git commit -m "Migrate models/clients.js to Firebase Admin SDK"
 // Run the dry run first, review the printed list, take a Firebase backup, then
 // run with --apply.
 
-import admin from "firebase-admin";
+import { getDatabase } from "firebase-admin/database";
 import { app } from "../config/firebase.js";
 import { normalizeLiveLink } from "../models/task.js";
 
-const db = admin.database(app);
+const db = getDatabase(app);
 const apply = process.argv.includes("--apply");
 
 // Attempts to validate+normalize a submission's raw link the same way the app does.
@@ -1547,7 +1549,7 @@ Through the GraphQL API (via the frontend, Apollo sandbox, or curl with a valid 
 
 - [ ] **Step 2: Confirm timestamps are real, not `null` or `NaN`**
 
-Specifically check the Firebase Console for `createdAt` (tasks, departments, clients), `submittedAt` (task submission), `reviewedAt` (task revisions), `assignedAt` (department members) — these all use `admin.database.ServerValue.TIMESTAMP` now. Confirm each shows a real millisecond timestamp in the Console, not a literal string, `null`, or an error.
+Specifically check the Firebase Console for `createdAt` (tasks, departments, clients), `submittedAt` (task submission), `reviewedAt` (task revisions), `assignedAt` (department members) — these all use `ServerValue.TIMESTAMP` now. Confirm each shows a real millisecond timestamp in the Console, not a literal string, `null`, or an error.
 
 - [ ] **Step 3: Record the result**
 
