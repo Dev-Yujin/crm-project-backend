@@ -1,4 +1,4 @@
-import { getDatabase, ref, push, set, get, remove, update, serverTimestamp } from "firebase/database";
+import { getDatabase, ServerValue } from "firebase-admin/database";
 import { app } from "../config/firebase.js";
 import { pool } from "../config/supabase.js";
 //Create a Department, and assign members (from the Postgres members table) to that Department — scoped per group
@@ -16,12 +16,12 @@ const mapMembers = (members) =>
 //Add department function
 export const addDepartment = async (name, groupId) => {
     try {
-        const departmentsRef = ref(db, "departments");
-        const newDepartmentRef = push(departmentsRef);
-        await set(newDepartmentRef, {
+        const departmentsRef = db.ref("departments");
+        const newDepartmentRef = departmentsRef.push();
+        await newDepartmentRef.set({
             name,
             groupId,
-            createdAt: serverTimestamp(),
+            createdAt: ServerValue.TIMESTAMP,
         });
 
         return { id: newDepartmentRef.key, name, groupId };
@@ -34,14 +34,14 @@ export const addDepartment = async (name, groupId) => {
 //Update a department's name (must belong to the caller's group)
 export const updateDepartment = async (departmentId, name, groupId) => {
     try {
-        const departmentRef = ref(db, `departments/${departmentId}`);
-        const departmentSnapshot = await get(departmentRef);
+        const departmentRef = db.ref(`departments/${departmentId}`);
+        const departmentSnapshot = await departmentRef.once("value");
 
         if (!departmentSnapshot.exists() || departmentSnapshot.val().groupId !== groupId) {
             throw new Error("Department not found");
         }
 
-        await update(departmentRef, { name });
+        await departmentRef.update({ name });
         return { id: departmentId, ...departmentSnapshot.val(), name, members: mapMembers(departmentSnapshot.val().members) };
     } catch (error) {
         console.error("Error updating department:", error);
@@ -52,14 +52,14 @@ export const updateDepartment = async (departmentId, name, groupId) => {
 //Delete a department (must belong to the caller's group)
 export const deleteDepartment = async (departmentId, groupId) => {
     try {
-        const departmentRef = ref(db, `departments/${departmentId}`);
-        const departmentSnapshot = await get(departmentRef);
+        const departmentRef = db.ref(`departments/${departmentId}`);
+        const departmentSnapshot = await departmentRef.once("value");
 
         if (!departmentSnapshot.exists() || departmentSnapshot.val().groupId !== groupId) {
             throw new Error("Department not found");
         }
 
-        await remove(departmentRef);
+        await departmentRef.remove();
         return { id: departmentId, ...departmentSnapshot.val(), members: mapMembers(departmentSnapshot.val().members) };
     } catch (error) {
         console.error("Error deleting department:", error);
@@ -70,8 +70,8 @@ export const deleteDepartment = async (departmentId, groupId) => {
 //Add a member (by their members.uuid) to a department (both must belong to the caller's group)
 export const addMemberToDepartment = async (departmentId, memberUuid, groupId) => {
     try {
-        const departmentRef = ref(db, `departments/${departmentId}`);
-        const departmentSnapshot = await get(departmentRef);
+        const departmentRef = db.ref(`departments/${departmentId}`);
+        const departmentSnapshot = await departmentRef.once("value");
 
         if (!departmentSnapshot.exists() || departmentSnapshot.val().groupId !== groupId) {
             throw new Error("Department not found");
@@ -85,11 +85,11 @@ export const addMemberToDepartment = async (departmentId, memberUuid, groupId) =
         }
 
         const member = result.rows[0];
-        const memberRef = ref(db, `departments/${departmentId}/members/${memberUuid}`);
-        await set(memberRef, {
+        const memberRef = db.ref(`departments/${departmentId}/members/${memberUuid}`);
+        await memberRef.set({
             username: member.username,
             email: member.email,
-            assignedAt: serverTimestamp(),
+            assignedAt: ServerValue.TIMESTAMP,
         });
 
         return { departmentId, uuid: member.uuid, username: member.username, email: member.email };
@@ -102,21 +102,21 @@ export const addMemberToDepartment = async (departmentId, memberUuid, groupId) =
 //Remove a member from a department (must belong to the caller's group)
 export const removeMemberFromDepartment = async (departmentId, memberUuid, groupId) => {
     try {
-        const departmentRef = ref(db, `departments/${departmentId}`);
-        const departmentSnapshot = await get(departmentRef);
+        const departmentRef = db.ref(`departments/${departmentId}`);
+        const departmentSnapshot = await departmentRef.once("value");
 
         if (!departmentSnapshot.exists() || departmentSnapshot.val().groupId !== groupId) {
             throw new Error("Department not found");
         }
 
-        const memberRef = ref(db, `departments/${departmentId}/members/${memberUuid}`);
-        const memberSnapshot = await get(memberRef);
+        const memberRef = db.ref(`departments/${departmentId}/members/${memberUuid}`);
+        const memberSnapshot = await memberRef.once("value");
 
         if (!memberSnapshot.exists()) {
             throw new Error("Member is not assigned to this department");
         }
 
-        await remove(memberRef);
+        await memberRef.remove();
         return true;
     } catch (error) {
         console.error("Error removing member from department:", error);
@@ -127,7 +127,7 @@ export const removeMemberFromDepartment = async (departmentId, memberUuid, group
 //Fetch all departments belonging to a group, along with their assigned members
 export const getAllDepartments = async (groupId) => {
     try {
-        const departmentsSnapshot = await get(ref(db, "departments"));
+        const departmentsSnapshot = await db.ref("departments").once("value");
 
         if (!departmentsSnapshot.exists()) {
             return [];
@@ -152,7 +152,7 @@ export const getAllDepartments = async (groupId) => {
 export const validateDepartmentExists = async (departmentId, groupId) => {
     if (departmentId == null) return;
 
-    const departmentSnapshot = await get(ref(db, `departments/${departmentId}`));
+    const departmentSnapshot = await db.ref(`departments/${departmentId}`).once("value");
 
     if (!departmentSnapshot.exists() || departmentSnapshot.val().groupId !== groupId) {
         throw new Error("Department not found");
