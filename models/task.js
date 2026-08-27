@@ -62,7 +62,7 @@ const normalizeNotes = (value) => {
 
 //Trims and validates a URL — only http(s) is accepted (javascript:/data: URLs would be
 //an XSS vector, since the frontend renders liveLink as a clickable anchor)
-const normalizeLiveLink = (value) => {
+export const normalizeLiveLink = (value) => {
     const trimmed = value.trim();
     if (trimmed === "") return null;
 
