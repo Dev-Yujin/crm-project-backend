@@ -1,4 +1,4 @@
-import { getDatabase, ref, push, set, get, remove, update } from "firebase/database";
+import { getDatabase } from "firebase-admin/database";
 import { app } from "../config/firebase.js";
 import {
     validateMembersExist,
@@ -39,8 +39,8 @@ export const addRecurringTask = async (clientId, clientName, taskName, taskDescr
 
         const dedupedAssignedUsers = [...new Set(assignedUsers ?? [])];
 
-        const recurringTasksRef = ref(db, "recurringTasks");
-        const newTemplateRef = push(recurringTasksRef);
+        const recurringTasksRef = db.ref("recurringTasks");
+        const newTemplateRef = recurringTasksRef.push();
         const now = Date.now();
 
         const template = {
@@ -61,7 +61,7 @@ export const addRecurringTask = async (clientId, clientName, taskName, taskDescr
             nextRunAt: computeNextRun(now, recurrence),
         };
 
-        await set(newTemplateRef, template);
+        await newTemplateRef.set(template);
 
         await addTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, null, createdBy, priority, newTemplateRef.key, null, departmentId, groupId, null, null, dedupedAssignedUsers);
 
@@ -74,7 +74,7 @@ export const addRecurringTask = async (clientId, clientName, taskName, taskDescr
 
 //Fetch every recurring task template across all groups — used only by the scheduler's cron tick
 const getAllRecurringTasksAcrossGroups = async () => {
-    const snapshot = await get(ref(db, "recurringTasks"));
+    const snapshot = await db.ref("recurringTasks").once("value");
     const data = snapshot.val();
     return data ? Object.entries(data).map(([id, template]) => ({ id, ...template })) : [];
 };
@@ -93,14 +93,14 @@ export const getAllRecurringTasks = async (groupId) => {
 //Delete a recurring task template (already-generated task instances are left untouched). Must belong to the caller's group.
 export const deleteRecurringTask = async (recurringTaskId, groupId) => {
     try {
-        const templateRef = ref(db, `recurringTasks/${recurringTaskId}`);
-        const snapshot = await get(templateRef);
+        const templateRef = db.ref(`recurringTasks/${recurringTaskId}`);
+        const snapshot = await templateRef.once("value");
 
         if (!snapshot.exists() || snapshot.val().groupId !== groupId) {
             throw new Error("Recurring task not found");
         }
 
-        await remove(templateRef);
+        await templateRef.remove();
         return true;
     } catch (error) {
         console.error("Error deleting recurring task:", error);
@@ -109,14 +109,14 @@ export const deleteRecurringTask = async (recurringTaskId, groupId) => {
 };
 
 const setActive = async (recurringTaskId, active, groupId) => {
-    const templateRef = ref(db, `recurringTasks/${recurringTaskId}`);
-    const snapshot = await get(templateRef);
+    const templateRef = db.ref(`recurringTasks/${recurringTaskId}`);
+    const snapshot = await templateRef.once("value");
 
     if (!snapshot.exists() || snapshot.val().groupId !== groupId) {
         throw new Error("Recurring task not found");
     }
 
-    await update(templateRef, { active });
+    await templateRef.update({ active });
     return { id: recurringTaskId, ...snapshot.val(), active };
 };
 
@@ -176,7 +176,7 @@ export const runDueRecurringTasks = async () => {
                 nextRunAt = computeNextRun(nextRunAt, template.recurrence);
             }
 
-            await update(ref(db, `recurringTasks/${template.id}`), {
+            await db.ref(`recurringTasks/${template.id}`).update({
                 lastRunAt: now,
                 nextRunAt,
             });
