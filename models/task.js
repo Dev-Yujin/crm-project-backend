@@ -1,4 +1,4 @@
-import { getDatabase, ref, push, set, get, remove, update, serverTimestamp } from "firebase/database";
+import { getDatabase, ServerValue } from "firebase-admin/database";
 import { app } from "../config/firebase.js";
 import { pool } from "../config/supabase.js";
 import { validateTaskStatusExists } from "./taskStatuses.js";
@@ -32,7 +32,7 @@ export const validateMembersExist = async (memberUuids, groupId) => {
 
 //A task's service must be one of the services its client actually avails, and the client must belong to the caller's group
 export const validateServiceForClient = async (clientId, serviceId, groupId) => {
-    const clientSnapshot = await get(ref(db, `clients/${clientId}`));
+    const clientSnapshot = await db.ref(`clients/${clientId}`).once("value");
 
     if (!clientSnapshot.exists() || clientSnapshot.val().groupId !== groupId) {
         throw new Error("Client not found");
@@ -76,7 +76,7 @@ export const normalizeLiveLink = (value) => {
 //Fetch all tasks belonging to a group
 export const getAllTasks = async (groupId) => {
     try {
-        const tasksSnapshot = await get(ref(db, "tasks"));
+        const tasksSnapshot = await db.ref("tasks").once("value");
         const tasksData = tasksSnapshot.val();
         const tasks = tasksData
             ? Object.entries(tasksData).map(([id, task]) => ({
@@ -121,9 +121,9 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
         const normalizedNotes = notes != null ? normalizeNotes(notes) : null;
         const dedupedAssignedUsers = [...new Set(assignedUsers ?? [])];
 
-        const tasksRef = ref(db, "tasks");
-        const newTaskRef = push(tasksRef);
-        await set(newTaskRef, {
+        const tasksRef = db.ref("tasks");
+        const newTaskRef = tasksRef.push();
+        await newTaskRef.set({
             clientId,
             clientName,
             taskName,
@@ -141,7 +141,7 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
             liveLink: normalizedLiveLink,
             source: normalizedSource,
             notes: normalizedNotes,
-            createdAt: serverTimestamp(),
+            createdAt: ServerValue.TIMESTAMP,
         });
 
         return {
@@ -174,14 +174,14 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
 //Delete a task by its ID (must belong to the caller's group)
 export const deleteTask = async (taskId, groupId) => {
     try {
-        const taskRef = ref(db, `tasks/${taskId}`);
-        const taskSnapshot = await get(taskRef);
+        const taskRef = db.ref(`tasks/${taskId}`);
+        const taskSnapshot = await taskRef.once("value");
 
         if (!taskSnapshot.exists() || taskSnapshot.val().groupId !== groupId) {
             throw new Error("Task not found");
         }
 
-        await remove(taskRef);
+        await taskRef.remove();
         return { id: taskId, ...taskSnapshot.val(), revisions: mapRevisions(taskSnapshot.val().revisions) };
     } catch (error) {
         console.error("Error deleting task:", error);
@@ -194,8 +194,8 @@ export const deleteTask = async (taskId, groupId) => {
 //member's own verified token and must match the task's stored groupId, or the task is treated as not found.
 export const editTask = async (taskId, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId, liveLink, source, notes, assignedUsers } = {}, callerGroupId) => {
     try {
-        const taskRef = ref(db, `tasks/${taskId}`);
-        const taskSnapshot = await get(taskRef);
+        const taskRef = db.ref(`tasks/${taskId}`);
+        const taskSnapshot = await taskRef.once("value");
 
         if (!taskSnapshot.exists() || taskSnapshot.val().groupId !== callerGroupId) {
             throw new Error("Task not found");
@@ -252,7 +252,7 @@ export const editTask = async (taskId, { clientId, clientName, taskName, taskDes
         };
 
         const finalData = { ...task, ...updatedTaskData };
-        await set(taskRef, finalData);
+        await taskRef.set(finalData);
 
         return { id: taskId, ...finalData, revisions: mapRevisions(finalData.revisions) };
     } catch (error) {
@@ -268,8 +268,8 @@ export const editTask = async (taskId, { clientId, clientName, taskName, taskDes
 //either way and must match the task's own group.
 export const submitTask = async (taskId, memberUuid, link, note = null, callerGroupId) => {
     try {
-        const taskRef = ref(db, `tasks/${taskId}`);
-        const taskSnapshot = await get(taskRef);
+        const taskRef = db.ref(`tasks/${taskId}`);
+        const taskSnapshot = await taskRef.once("value");
 
         if (!taskSnapshot.exists() || taskSnapshot.val().groupId !== callerGroupId) {
             throw new Error("Task not found");
@@ -285,10 +285,10 @@ export const submitTask = async (taskId, memberUuid, link, note = null, callerGr
             link,
             note,
             submittedBy: memberUuid,
-            submittedAt: serverTimestamp(),
+            submittedAt: ServerValue.TIMESTAMP,
         };
 
-        await update(taskRef, { submission });
+        await taskRef.update({ submission });
 
         return {
             id: taskId,
@@ -305,8 +305,8 @@ export const submitTask = async (taskId, memberUuid, link, note = null, callerGr
 //A user leaves a review comment on a task, logged to its revision history. Callable anytime — not gated by status. Must belong to the caller's group.
 export const reviewTask = async (taskId, reviewedBy, comment, groupId) => {
     try {
-        const taskRef = ref(db, `tasks/${taskId}`);
-        const taskSnapshot = await get(taskRef);
+        const taskRef = db.ref(`tasks/${taskId}`);
+        const taskSnapshot = await taskRef.once("value");
 
         if (!taskSnapshot.exists() || taskSnapshot.val().groupId !== groupId) {
             throw new Error("Task not found");
@@ -314,12 +314,12 @@ export const reviewTask = async (taskId, reviewedBy, comment, groupId) => {
 
         const task = taskSnapshot.val();
 
-        const revisionsRef = ref(db, `tasks/${taskId}/revisions`);
-        const newRevisionRef = push(revisionsRef);
-        await set(newRevisionRef, {
+        const revisionsRef = db.ref(`tasks/${taskId}/revisions`);
+        const newRevisionRef = revisionsRef.push();
+        await newRevisionRef.set({
             comment,
             reviewedBy,
-            reviewedAt: serverTimestamp(),
+            reviewedAt: ServerValue.TIMESTAMP,
         });
 
         return {
