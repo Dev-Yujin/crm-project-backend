@@ -91,10 +91,14 @@ export async function upsertBillingFromSubscription(subscription) {
     ? new Date(subscription.current_period_end * 1000)
     : null;
 
-  await pool.query(
+  const result = await pool.query(
     `UPDATE group_billing
      SET stripe_subscription_id = $1, plan = $2, status = $3, current_period_end = $4, updated_at = now()
      WHERE stripe_customer_id = $5`,
     [subscription.id, planKey, status, currentPeriodEnd, customerId],
   );
+
+  if (result.rowCount === 0) {
+    throw new Error(`No group_billing row found for Stripe customer ${customerId}`);
+  }
 }
