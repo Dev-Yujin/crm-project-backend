@@ -1525,7 +1525,12 @@ export function Billing() {
         )}
         {billing?.plan && (
           <div className="mt-4">
-            <Button variant="secondary" onClick={manageBilling} loading={portalPending}>
+            <Button
+              variant="secondary"
+              onClick={manageBilling}
+              loading={portalPending}
+              disabled={pendingPlan !== null}
+            >
               Manage billing
             </Button>
           </div>
@@ -1551,7 +1556,7 @@ export function Billing() {
             <Button
               className="mt-5"
               variant={billing?.plan === plan.tier ? 'secondary' : 'primary'}
-              disabled={billing?.plan === plan.tier}
+              disabled={billing?.plan === plan.tier || pendingPlan !== null || portalPending}
               loading={pendingPlan === plan.tier}
               onClick={() => choosePlan(plan.tier)}
             >
