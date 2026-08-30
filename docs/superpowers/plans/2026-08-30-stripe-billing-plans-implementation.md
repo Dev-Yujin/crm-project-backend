@@ -1724,9 +1724,11 @@ Then render the banner at the top of `<main>`, just before the animated page wra
 
 ```tsx
         <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-6xl px-4 pt-4 sm:px-6 lg:px-10 lg:pt-6">
-            <LockoutBanner billing={billing} isAdmin />
-          </div>
+          {billing?.isLocked && (
+            <div className="mx-auto max-w-6xl px-4 pt-4 sm:px-6 lg:px-10 lg:pt-6">
+              <LockoutBanner billing={billing} isAdmin />
+            </div>
+          )}
           {/* Keyed by path so each page change replays the entrance animation. */}
           <div
             key={location.pathname}
@@ -1737,7 +1739,7 @@ Then render the banner at the top of `<main>`, just before the animated page wra
         </main>
 ```
 
-(The extra wrapper div only renders when `billing?.isLocked` is true, since `LockoutBanner` returns `null` otherwise — no empty spacing shows up when the group isn't locked.)
+(The wrapper div itself is gated on `billing?.isLocked` — not just `LockoutBanner`'s own internal null-return — so no empty padding shows up when the group isn't locked.)
 
 - [ ] **Step 5: Verify it compiles**
 
