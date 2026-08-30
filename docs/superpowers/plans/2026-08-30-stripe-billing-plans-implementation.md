@@ -30,7 +30,7 @@
 - Test: `crm-proj/config/plans.test.js`
 
 **Interfaces:**
-- Produces: `PLANS` (object keyed by `'starter' | 'business' | 'scale'`, each `{ tier, name, priceMonthlyUsd, stripePriceId, adminLimit, memberLimit, storageGb, aiNotesHoursPerMonth }`), `planByPriceId(priceId: string): string | null`, both from `config/plans.js`. Every later backend task imports from here.
+- Produces: `PLANS` (object keyed by `'starter' | 'business' | 'scale'`, each `{ tier, name, priceMonthlyUsd, stripePriceId, adminLimit, memberLimit, storageGb, aiNotesHoursPerMonth }`), `planByPriceId(priceId: string): string | null`, `planLimitsResponse(planKey: string | null): { tier, name, priceMonthlyUsd, adminLimit, memberLimit, storageGb, aiNotesHoursPerMonth }` (strips `stripePriceId` for GraphQL responses; `null`/missing key defaults to `'starter'`), all from `config/plans.js`. Every later backend task imports from here — `planLimitsResponse` in particular is shared by both `models/billing.js` (Task 4) and `resolvers/billingResolvers.js` (Task 5) so the plan→response shape is defined exactly once.
 
 - [ ] **Step 1: Install dependencies**
 
@@ -78,7 +78,7 @@ dotenv.config();
 
 ```js
 import { describe, it, expect } from 'vitest';
-import { PLANS, planByPriceId } from './plans.js';
+import { PLANS, planByPriceId, planLimitsResponse } from './plans.js';
 
 describe('planByPriceId', () => {
   it('finds the plan key for a known price id', () => {
@@ -89,6 +89,25 @@ describe('planByPriceId', () => {
 
   it('returns null for an unknown price id', () => {
     expect(planByPriceId('price_doesnotexist')).toBeNull();
+  });
+});
+
+describe('planLimitsResponse', () => {
+  it('returns the full limits shape for a known plan key, without leaking stripePriceId', () => {
+    const result = planLimitsResponse('business');
+    expect(result).toEqual({
+      tier: 'BUSINESS',
+      name: 'Business',
+      priceMonthlyUsd: 59,
+      adminLimit: 3,
+      memberLimit: 25,
+      storageGb: 50,
+      aiNotesHoursPerMonth: 20,
+    });
+  });
+
+  it('defaults to Starter-level limits when planKey is null (still on trial)', () => {
+    expect(planLimitsResponse(null).tier).toBe('STARTER');
   });
 });
 ```
@@ -144,12 +163,31 @@ export const PLANS = {
 export function planByPriceId(priceId) {
   return Object.keys(PLANS).find((key) => PLANS[key].stripePriceId === priceId) ?? null;
 }
+
+// Shapes a plan key into the GraphQL PlanLimits response — used by both
+// models/billing.js (a group's current limits) and resolvers/billingResolvers.js (the
+// public plans list), so the shape is defined exactly once. Strips stripePriceId, which
+// is an internal implementation detail with no place in a client-facing response.
+// planKey may be null (a group still on trial has no plan chosen yet) — defaults to
+// Starter-level limits, matching the trial's actual limits.
+export function planLimitsResponse(planKey) {
+  const config = PLANS[planKey ?? 'starter'];
+  return {
+    tier: config.tier,
+    name: config.name,
+    priceMonthlyUsd: config.priceMonthlyUsd,
+    adminLimit: config.adminLimit,
+    memberLimit: config.memberLimit,
+    storageGb: config.storageGb,
+    aiNotesHoursPerMonth: config.aiNotesHoursPerMonth,
+  };
+}
 ```
 
 - [ ] **Step 7: Run test to verify it passes**
 
 Run: `cd crm-proj && npm test`
-Expected: PASS (2 tests)
+Expected: PASS (4 tests)
 
 - [ ] **Step 8: Commit**
 
@@ -371,7 +409,7 @@ export function mapStripeStatus(stripeStatus) {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd crm-proj && npm test`
-Expected: PASS (13 tests total, including Task 1's)
+Expected: PASS (15 tests total, including Task 1's)
 
 - [ ] **Step 5: Commit**
 
@@ -388,7 +426,7 @@ git commit -m "Add pure billing lock/status logic with tests"
 - Create: `crm-proj/models/billing.js`
 
 **Interfaces:**
-- Consumes: `PLANS`, `planByPriceId` (Task 1); `computeIsLocked`, `mapStripeStatus` (Task 3); `pool` from `crm-proj/config/supabase.js` (existing).
+- Consumes: `planByPriceId`, `planLimitsResponse` (Task 1); `computeIsLocked`, `mapStripeStatus` (Task 3); `pool` from `crm-proj/config/supabase.js` (existing).
 - Produces: `getOrCreateBilling(groupId: string): Promise<Billing>` where `Billing = { groupId, status, plan: string|null, limits: {tier,name,priceMonthlyUsd,adminLimit,memberLimit,storageGb,aiNotesHoursPerMonth}, trialEndsAt: string|null, currentPeriodEnd: string|null, isLocked: boolean }`; `isGroupLocked(groupId: string): Promise<boolean>`; `getStripeCustomerId(groupId: string): Promise<string|null>`; `getOrCreateStripeCustomerId(groupId: string, createCustomerFn: () => Promise<string>): Promise<string>`; `upsertBillingFromSubscription(subscription: Stripe.Subscription): Promise<void>`. Consumed by `resolvers/billingResolvers.js` (Task 5), `utils/billingLockPlugin.js` (Task 6), `routes/stripeWebhook.js` (Task 7).
 
 No isolated automated test here — every function needs a live Postgres connection, and this repo has no test-database harness (out of scope for this spec). Correctness is verified end-to-end in Task 8 against the real (single, shared) database, same as the rest of this codebase's existing manual-verification convention.
@@ -399,30 +437,17 @@ No isolated automated test here — every function needs a live Postgres connect
 
 ```js
 import { pool } from '../config/supabase.js';
-import { PLANS, planByPriceId } from '../config/plans.js';
+import { planByPriceId, planLimitsResponse } from '../config/plans.js';
 import { computeIsLocked, mapStripeStatus } from './billingLogic.js';
 
 const TRIAL_DAYS = 14;
-
-function planLimits(planKey) {
-  const config = PLANS[planKey ?? 'starter'];
-  return {
-    tier: config.tier,
-    name: config.name,
-    priceMonthlyUsd: config.priceMonthlyUsd,
-    adminLimit: config.adminLimit,
-    memberLimit: config.memberLimit,
-    storageGb: config.storageGb,
-    aiNotesHoursPerMonth: config.aiNotesHoursPerMonth,
-  };
-}
 
 function mapRow(row) {
   return {
     groupId: row.group_id,
     status: row.status,
     plan: row.plan ? row.plan.toUpperCase() : null,
-    limits: planLimits(row.plan),
+    limits: planLimitsResponse(row.plan),
     trialEndsAt: row.trial_ends_at ? row.trial_ends_at.toISOString() : null,
     currentPeriodEnd: row.current_period_end ? row.current_period_end.toISOString() : null,
     isLocked: computeIsLocked(row.status, row.trial_ends_at),
@@ -534,7 +559,7 @@ git commit -m "Add billing data access module"
 - Create: `crm-proj/resolvers/billingResolvers.js`
 
 **Interfaces:**
-- Consumes: `requireGroup`, `requireCallerGroupId` from `crm-proj/utils/requireUser.js` (existing); `PLANS` (Task 1); `getOrCreateBilling`, `getOrCreateStripeCustomerId`, `getStripeCustomerId` (Task 4); `stripe` client — **created in this task** at `crm-proj/config/stripe.js` (needed by the resolvers, small enough not to warrant its own task).
+- Consumes: `requireGroup`, `requireCallerGroupId` from `crm-proj/utils/requireUser.js` (existing); `PLANS`, `planLimitsResponse` (Task 1); `getOrCreateBilling`, `getOrCreateStripeCustomerId`, `getStripeCustomerId` (Task 4); `stripe` client — **created in this task** at `crm-proj/config/stripe.js` (needed by the resolvers, small enough not to warrant its own task).
 - Produces: default-exported `billingTypeDefs` and `billingResolvers`, wired into `server.js` in Task 8.
 
 - [ ] **Step 1: Add the Stripe client**
@@ -608,26 +633,13 @@ export default billingTypeDefs;
 ```js
 import { GraphQLError } from 'graphql';
 import { requireGroup, requireCallerGroupId } from '../utils/requireUser.js';
-import { PLANS } from '../config/plans.js';
+import { PLANS, planLimitsResponse } from '../config/plans.js';
 import { stripe } from '../config/stripe.js';
 import {
   getOrCreateBilling,
   getOrCreateStripeCustomerId,
   getStripeCustomerId,
 } from '../models/billing.js';
-
-function planLimitsResponse(planKey) {
-  const config = PLANS[planKey];
-  return {
-    tier: config.tier,
-    name: config.name,
-    priceMonthlyUsd: config.priceMonthlyUsd,
-    adminLimit: config.adminLimit,
-    memberLimit: config.memberLimit,
-    storageGb: config.storageGb,
-    aiNotesHoursPerMonth: config.aiNotesHoursPerMonth,
-  };
-}
 
 function frontendOrigin() {
   return (process.env.FRONTEND_ORIGIN ?? 'http://localhost:5173').split(',')[0].trim();
@@ -818,7 +830,7 @@ export default billingLockPlugin;
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd crm-proj && npm test`
-Expected: PASS (18 tests total)
+Expected: PASS (20 tests total)
 
 - [ ] **Step 5: Commit**
 
@@ -978,7 +990,7 @@ describe('stripeWebhookHandler', () => {
 - [ ] **Step 3: Run tests to verify they pass**
 
 Run: `cd crm-proj && npm test`
-Expected: PASS (21 tests total). If the signature tests fail, confirm `STRIPE_WEBHOOK_SECRET` is set in `.env` (Vitest loads it via `vitest.setup.js` from Task 1).
+Expected: PASS (23 tests total). If the signature tests fail, confirm `STRIPE_WEBHOOK_SECRET` is set in `.env` (Vitest loads it via `vitest.setup.js` from Task 1).
 
 - [ ] **Step 4: Commit**
 
@@ -1705,5 +1717,6 @@ git commit -m "Wire billing lockout banner into the member portal"
 ## Self-Review Notes
 
 - **Spec coverage:** plans/pricing (Task 1), trial computed from real signup date (Task 4), `group_billing` schema incl. the new unique index (Task 2), checkout/portal/webhook (Tasks 5, 7, 8), centralized lockout plugin with the exact allowlist (Task 6), frontend billing page + lockout banners for both admin and member (Tasks 9–14). All spec sections have a corresponding task.
-- **Type consistency checked:** `Billing`/`PlanLimits` field names match exactly across the GraphQL schema (Task 5), the backend `mapRow`/`planLimitsResponse` shape (Tasks 4–5), the frontend TypeScript types (Task 9), and every query string/component that reads them (Tasks 10–14) — `groupId`, `status`, `plan`, `limits.{tier,name,priceMonthlyUsd,adminLimit,memberLimit,storageGb,aiNotesHoursPerMonth}`, `trialEndsAt`, `currentPeriodEnd`, `isLocked` used identically everywhere.
+- **Type consistency checked:** `Billing`/`PlanLimits` field names match exactly across the GraphQL schema (Task 5), the backend `mapRow`/`planLimitsResponse` shape (Task 1, consumed by Tasks 4–5), the frontend TypeScript types (Task 9), and every query string/component that reads them (Tasks 10–14) — `groupId`, `status`, `plan`, `limits.{tier,name,priceMonthlyUsd,adminLimit,memberLimit,storageGb,aiNotesHoursPerMonth}`, `trialEndsAt`, `currentPeriodEnd`, `isLocked` used identically everywhere.
+- **Duplication caught in pre-flight scan (fixed before dispatch):** Tasks 4 and 5 originally each defined their own copy of the plan→response shaping function. Consolidated into `planLimitsResponse` in `config/plans.js` (Task 1), imported by both.
 - **No placeholders:** every step has real, complete code — no TBD/TODO, no "similar to Task N" shortcuts.
