@@ -41,121 +41,128 @@ const server = new ApolloServer({
   plugins: [ApolloServerPluginDrainHttpServer({ httpServer })],
 });
 
-await server.start();
-startScheduler();
+async function main() {
+  await server.start();
+  startScheduler();
 
-// Auth resolves in this order:
-//   1. Supabase session cookie (the browser admin app) — via @supabase/ssr, which also
-//      transparently refreshes an expired access token using the cookie's refresh token
-//      and re-sets the cookies on this same response when it does.
-//   2. Member session cookie (the browser member portal).
-//   3. Authorization header bearer token (non-browser callers — scripts, tools). Accepts
-//      either a member token or a raw Supabase access token; the public API no longer
-//      hands either one to a browser to store, see loginMember/loginUser.
-const resolveContext = async (req, res) => {
-  const supabase = createRequestSupabaseClient(req, res);
-  const { data: { user: supabaseUser } } = await supabase.auth.getUser();
+  // Auth resolves in this order:
+  //   1. Supabase session cookie (the browser admin app) — via @supabase/ssr, which also
+  //      transparently refreshes an expired access token using the cookie's refresh token
+  //      and re-sets the cookies on this same response when it does.
+  //   2. Member session cookie (the browser member portal).
+  //   3. Authorization header bearer token (non-browser callers — scripts, tools). Accepts
+  //      either a member token or a raw Supabase access token; the public API no longer
+  //      hands either one to a browser to store, see loginMember/loginUser.
+  const resolveContext = async (req, res) => {
+    const supabase = createRequestSupabaseClient(req, res);
+    const { data: { user: supabaseUser } } = await supabase.auth.getUser();
 
-  if (supabaseUser) {
-    try {
-      const groupId = await fetchUserGroupId(supabaseUser.id);
-      return { user: supabaseUser, groupId, member: null };
-    } catch {
-      // no group row yet — still authenticated, just ungated (requireGroup handles this)
-      return { user: supabaseUser, groupId: null, member: null };
+    if (supabaseUser) {
+      try {
+        const groupId = await fetchUserGroupId(supabaseUser.id);
+        return { user: supabaseUser, groupId, member: null };
+      } catch {
+        // no group row yet — still authenticated, just ungated (requireGroup handles this)
+        return { user: supabaseUser, groupId: null, member: null };
+      }
     }
-  }
 
-  const cookieToken = req.cookies?.[MEMBER_COOKIE_NAME] ?? null;
+    const cookieToken = req.cookies?.[MEMBER_COOKIE_NAME] ?? null;
 
-  if (cookieToken) {
+    if (cookieToken) {
+      try {
+        const member = await fetchMemberFromToken(cookieToken);
+        return { user: null, groupId: null, member };
+      } catch {
+        // invalid/expired/revoked cookie — fall through and treat as unauthenticated
+        // rather than also trying it as a Supabase token, since it came from the
+        // member-cookie slot specifically
+      }
+    }
+
+    const authHeader = req.headers.authorization ?? '';
+    const accessToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+    if (!accessToken) {
+      return { user: null, groupId: null, member: null };
+    }
+
     try {
-      const member = await fetchMemberFromToken(cookieToken);
+      const member = await fetchMemberFromToken(accessToken);
       return { user: null, groupId: null, member };
     } catch {
-      // invalid/expired/revoked cookie — fall through and treat as unauthenticated
-      // rather than also trying it as a Supabase token, since it came from the
-      // member-cookie slot specifically
+      // not a valid member token — fall through and try it as a Supabase session
     }
-  }
 
-  const authHeader = req.headers.authorization ?? '';
-  const accessToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    try {
+      const user = await fetchCurrentUser(accessToken);
+      const groupId = await fetchUserGroupId(user.id);
+      return { user, groupId, member: null };
+    } catch {
+      return { user: null, groupId: null, member: null };
+    }
+  };
 
-  if (!accessToken) {
-    return { user: null, groupId: null, member: null };
-  }
+  const allowedOrigins = (process.env.FRONTEND_ORIGIN ?? 'http://localhost:5173')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 
-  try {
-    const member = await fetchMemberFromToken(accessToken);
-    return { user: null, groupId: null, member };
-  } catch {
-    // not a valid member token — fall through and try it as a Supabase session
-  }
+  const port = process.env.PORT ?? 4000;
+  const backendUrl = process.env.PUBLIC_BACKEND_URL ?? `http://localhost:${port}`;
+  const frontendUrl = allowedOrigins[0];
 
-  try {
-    const user = await fetchCurrentUser(accessToken);
-    const groupId = await fetchUserGroupId(user.id);
-    return { user, groupId, member: null };
-  } catch {
-    return { user: null, groupId: null, member: null };
-  }
-};
+  app.use(cors({ origin: allowedOrigins, credentials: true }));
+  app.use(cookieParser());
 
-const allowedOrigins = (process.env.FRONTEND_ORIGIN ?? 'http://localhost:5173')
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+  // Google OAuth, mediated entirely server-side (PKCE) so the session is only ever handed to
+  // the browser as an httpOnly cookie — the browser's own JS never sees an access/refresh
+  // token or the OAuth code at any point. Requires this callback URL to be added to the
+  // Supabase project's Authentication -> URL Configuration -> Redirect URLs allowlist; see
+  // ADMIN_SESSION_SECURITY_INTEGRATION.md.
+  app.get('/auth/google', async (req, res) => {
+    const supabase = createRequestSupabaseClient(req, res);
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: `${backendUrl}/auth/google/callback` },
+    });
 
-const port = process.env.PORT ?? 4000;
-const backendUrl = process.env.PUBLIC_BACKEND_URL ?? `http://localhost:${port}`;
-const frontendUrl = allowedOrigins[0];
+    if (error || !data?.url) {
+      return res.redirect(`${frontendUrl}/login?error=oauth_start_failed`);
+    }
 
-app.use(cors({ origin: allowedOrigins, credentials: true }));
-app.use(cookieParser());
-
-// Google OAuth, mediated entirely server-side (PKCE) so the session is only ever handed to
-// the browser as an httpOnly cookie — the browser's own JS never sees an access/refresh
-// token or the OAuth code at any point. Requires this callback URL to be added to the
-// Supabase project's Authentication -> URL Configuration -> Redirect URLs allowlist; see
-// ADMIN_SESSION_SECURITY_INTEGRATION.md.
-app.get('/auth/google', async (req, res) => {
-  const supabase = createRequestSupabaseClient(req, res);
-  const { data, error } = await supabase.auth.signInWithOAuth({
-    provider: 'google',
-    options: { redirectTo: `${backendUrl}/auth/google/callback` },
+    res.redirect(data.url);
   });
 
-  if (error || !data?.url) {
-    return res.redirect(`${frontendUrl}/login?error=oauth_start_failed`);
-  }
+  app.get('/auth/google/callback', async (req, res) => {
+    const code = typeof req.query.code === 'string' ? req.query.code : null;
 
-  res.redirect(data.url);
+    if (!code) {
+      return res.redirect(`${frontendUrl}/login?error=oauth_no_code`);
+    }
+
+    const supabase = createRequestSupabaseClient(req, res);
+    const { error } = await supabase.auth.exchangeCodeForSession(code);
+
+    if (error) {
+      return res.redirect(`${frontendUrl}/login?error=oauth_exchange_failed`);
+    }
+
+    res.redirect(`${frontendUrl}/app`);
+  });
+
+  app.use(
+    express.json(),
+    expressMiddleware(server, {
+      context: async ({ req, res }) => ({ ...(await resolveContext(req, res)), res, req }),
+    })
+  );
+
+  await new Promise((resolve) => httpServer.listen({ port }, resolve));
+  console.log(`🚀 Server ready at http://localhost:${port}/`);
+}
+
+main().catch((err) => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
 });
-
-app.get('/auth/google/callback', async (req, res) => {
-  const code = typeof req.query.code === 'string' ? req.query.code : null;
-
-  if (!code) {
-    return res.redirect(`${frontendUrl}/login?error=oauth_no_code`);
-  }
-
-  const supabase = createRequestSupabaseClient(req, res);
-  const { error } = await supabase.auth.exchangeCodeForSession(code);
-
-  if (error) {
-    return res.redirect(`${frontendUrl}/login?error=oauth_exchange_failed`);
-  }
-
-  res.redirect(`${frontendUrl}/app`);
-});
-
-app.use(
-  express.json(),
-  expressMiddleware(server, {
-    context: async ({ req, res }) => ({ ...(await resolveContext(req, res)), res, req }),
-  })
-);
-
-await new Promise((resolve) => httpServer.listen({ port }, resolve));
-console.log(`🚀 Server ready at http://localhost:${port}/`);
