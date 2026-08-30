@@ -204,9 +204,11 @@ git commit -m "Add Stripe SDK, Vitest, and the plan tier config"
 - Create: `crm-proj/scripts/create-group-billing-table.js`
 
 **Interfaces:**
-- Produces: the `group_billing` Postgres table and a unique index on `groups."groupId"`, which every later task in this plan reads/writes via `pool.query`.
+- Produces: the `group_billing` Postgres table, which every later task in this plan reads/writes via `pool.query`.
 
-This runs DDL against the shared Supabase database that already backs the live app (there is no separate dev/staging database in this project) — **confirm with the user before running Step 2**, even though the change is purely additive (`IF NOT EXISTS` guards, no existing table touched).
+This runs DDL against the shared Supabase database that already backs the live app (there is no separate dev/staging database in this project) — **confirm with the user before running Step 2**, even though the change is purely additive (`IF NOT EXISTS` guard, no existing table touched).
+
+**Note on the FK design:** `groups."groupId"` is *not* unique — multiple rows share one `groupId` when a group has multiple admins (confirmed against the live data: one existing group already has 3 admin rows). `group_billing.group_id` is therefore a plain `uuid PRIMARY KEY` with **no foreign key** to `groups`, matching how `members.group_id` already references a group loosely, with no FK enforced either — this schema has no single-row representation of "a group" to reference. Application code is the source of truth for a valid `group_id`, same as it already is for `members.group_id`.
 
 - [ ] **Step 1: Write the migration script**
 
@@ -222,13 +224,10 @@ This runs DDL against the shared Supabase database that already backs the live a
 import { pool } from "../config/supabase.js";
 
 async function main() {
-  console.log("Creating unique index on groups.groupId (if missing)...");
-  await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS groups_group_id_unique ON groups ("groupId")');
-
   console.log("Creating group_billing table (if missing)...");
   await pool.query(`
     CREATE TABLE IF NOT EXISTS group_billing (
-      group_id uuid PRIMARY KEY REFERENCES groups ("groupId"),
+      group_id uuid PRIMARY KEY,
       stripe_customer_id text UNIQUE,
       stripe_subscription_id text UNIQUE,
       plan text CHECK (plan IN ('starter', 'business', 'scale')),
