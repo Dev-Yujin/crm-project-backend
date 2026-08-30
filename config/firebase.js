@@ -6,19 +6,20 @@ import path from "path";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
-const raw = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
-if (!raw) {
+const rawBase64 = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON_BASE64;
+if (!rawBase64) {
   throw new Error(
-    "GOOGLE_APPLICATION_CREDENTIALS_JSON is not set — the backend cannot authenticate to Firebase without it. " +
-    "Set it to the full contents of your Firebase service account key JSON (see docs/superpowers/specs/2026-08-27-firebase-admin-sdk-write-lockdown-design.md)."
+    "GOOGLE_APPLICATION_CREDENTIALS_JSON_BASE64 is not set — the backend cannot authenticate to Firebase without it. " +
+    "Set it to the base64 encoding of your Firebase service account key JSON (see docs/superpowers/specs/2026-08-27-firebase-admin-sdk-write-lockdown-design.md). " +
+    "Base64 is used instead of raw JSON because some hosting panels (e.g. Hostinger) mangle the quotes/braces of a raw JSON env var value."
   );
 }
 
 let serviceAccount;
 try {
-  serviceAccount = JSON.parse(raw);
+  serviceAccount = JSON.parse(Buffer.from(rawBase64, "base64").toString("utf8"));
 } catch (err) {
-  throw new Error(`GOOGLE_APPLICATION_CREDENTIALS_JSON is not valid JSON: ${err.message}`);
+  throw new Error(`GOOGLE_APPLICATION_CREDENTIALS_JSON_BASE64 does not decode to valid JSON: ${err.message}`);
 }
 
 // Initialize Firebase Admin SDK — a trusted service-account credential that
