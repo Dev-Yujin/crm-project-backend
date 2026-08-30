@@ -83,4 +83,32 @@ describe('stripeWebhookHandler', () => {
     expect(res.statusCode).toBe(200);
     expect(upsertBillingFromSubscription).not.toHaveBeenCalled();
   });
+
+  it('responds 500 when upsertBillingFromSubscription throws (e.g. no matching group_billing row)', async () => {
+    upsertBillingFromSubscription.mockRejectedValueOnce(new Error('No group_billing row found for Stripe customer cus_123'));
+
+    const subscription = {
+      id: 'sub_123',
+      customer: 'cus_123',
+      status: 'active',
+      items: { data: [{ price: { id: 'price_starter' } }] },
+      current_period_end: 1893456000,
+    };
+    const payload = JSON.stringify({
+      id: 'evt_789',
+      type: 'customer.subscription.updated',
+      data: { object: subscription },
+    });
+    const header = stripe.webhooks.generateTestHeaderString({
+      payload,
+      secret: process.env.STRIPE_WEBHOOK_SECRET,
+    });
+
+    const req = { headers: { 'stripe-signature': header }, body: Buffer.from(payload) };
+    const res = mockRes();
+
+    await stripeWebhookHandler(req, res);
+
+    expect(res.statusCode).toBe(500);
+  });
 });
