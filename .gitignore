@@ -4,3 +4,4 @@ node_modules/
 # Firebase service account keys — secrets, never commit
 *firebase-adminsdk*.json
 serviceAccountKey.json
+.worktrees/
