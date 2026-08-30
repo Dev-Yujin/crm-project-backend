@@ -25,6 +25,10 @@ import groupTypeDefs from './typedefs/groupTypeDefs.js';
 import groupResolvers from './resolvers/groupResolvers.js';
 import emailCredentialsTypeDefs from './typedefs/emailCredentialsTypeDefs.js';
 import emailCredentialsResolvers from './resolvers/emailCredentialsResolvers.js';
+import billingTypeDefs from './typedefs/billingTypeDefs.js';
+import billingResolvers from './resolvers/billingResolvers.js';
+import billingLockPlugin from './utils/billingLockPlugin.js';
+import { stripeWebhookHandler } from './routes/stripeWebhook.js';
 import { fetchCurrentUser } from './models/userFunctions.js';
 import { fetchUserGroupId } from './utils/groups.js';
 import { fetchMemberFromToken } from './models/membersFunction.js';
@@ -36,9 +40,9 @@ const app = express();
 const httpServer = http.createServer(app);
 
 const server = new ApolloServer({
-  typeDefs: [userTypeDefs, memberTypeDefs, clientTypeDefs, taskTypeDefs, departmentTypeDefs, serviceTypeDefs, recurringTaskTypeDefs, taskStatusTypeDefs, groupTypeDefs, emailCredentialsTypeDefs],
-  resolvers: [userResolvers, memberResolvers, clientResolvers, taskResolvers, departmentResolvers, serviceResolvers, recurringTaskResolvers, taskStatusResolvers, groupResolvers, emailCredentialsResolvers],
-  plugins: [ApolloServerPluginDrainHttpServer({ httpServer })],
+  typeDefs: [userTypeDefs, memberTypeDefs, clientTypeDefs, taskTypeDefs, departmentTypeDefs, serviceTypeDefs, recurringTaskTypeDefs, taskStatusTypeDefs, groupTypeDefs, emailCredentialsTypeDefs, billingTypeDefs],
+  resolvers: [userResolvers, memberResolvers, clientResolvers, taskResolvers, departmentResolvers, serviceResolvers, recurringTaskResolvers, taskStatusResolvers, groupResolvers, emailCredentialsResolvers, billingResolvers],
+  plugins: [ApolloServerPluginDrainHttpServer({ httpServer }), billingLockPlugin],
 });
 
 async function main() {
@@ -150,6 +154,11 @@ async function main() {
 
     res.redirect(`${frontendUrl}/app`);
   });
+
+  // Stripe needs the exact raw request bytes to verify the signature — express.raw here,
+  // NOT express.json(), and this must be registered before the app-wide express.json()
+  // below or that would consume/reparse the body first.
+  app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), stripeWebhookHandler);
 
   app.use(
     express.json(),

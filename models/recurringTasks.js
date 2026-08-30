@@ -8,6 +8,7 @@ import {
 } from "./task.js";
 import { validateUsersExist } from "./groups.js";
 import { validateDepartmentExists } from "./departments.js";
+import { isGroupLocked } from "./billing.js";
 //Recurring task templates: on their schedule, the scheduler generates a fresh
 //one-off Task instance (via addTask) tagged with recurringTaskId
 
@@ -149,6 +150,7 @@ export const runDueRecurringTasks = async () => {
 
     for (const template of templates) {
         if (!template.active || template.nextRunAt > now) continue;
+        if (await isGroupLocked(template.groupId)) continue;
 
         try {
             const task = await addTask(
