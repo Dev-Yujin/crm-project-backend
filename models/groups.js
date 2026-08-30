@@ -68,3 +68,14 @@ export const getMyGroup = async (userId) => {
 
     return { groupId: result.rows[0].groupId, joinCode: result.rows[0].join_code };
 };
+
+//Sets or clears the caller's own profile-picture data URL. null clears it.
+export const updateUserAvatar = async (userId, avatarBase64) => {
+    await pool.query('UPDATE groups SET avatar_base64 = $1 WHERE "userId" = $2', [avatarBase64, userId]);
+};
+
+//Reads the caller's own profile-picture data URL, if any.
+export const getUserAvatar = async (userId) => {
+    const result = await pool.query('SELECT avatar_base64 FROM groups WHERE "userId" = $1 LIMIT 1', [userId]);
+    return result.rows[0]?.avatar_base64 ?? null;
+};
