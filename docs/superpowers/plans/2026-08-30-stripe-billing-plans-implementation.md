@@ -731,15 +731,59 @@ git commit -m "Add billing GraphQL schema and resolvers"
 
 **Interfaces:**
 - Consumes: `requireCallerGroupId` from `crm-proj/utils/requireUser.js` (existing); `isGroupLocked` (Task 4).
-- Produces: `shouldBypassLock(fieldNames: string[]): boolean`; default export `billingLockPlugin`, an Apollo Server plugin object. Registered into `server.js`'s `plugins` array in Task 8.
+- Produces: `shouldBypassLock(fieldNames: string[]): boolean`; `collectMutationFieldNames(selectionSet, fragmentsByName: Map<string, FragmentDefinitionNode>, seenFragments?: Set<string>): Set<string>`; default export `billingLockPlugin`, an Apollo Server plugin object. Registered into `server.js`'s `plugins` array in Task 8.
 
 - [ ] **Step 1: Write the failing tests**
 
 `crm-proj/utils/billingLockPlugin.test.js`:
 
 ```js
+import { parse } from 'graphql';
 import { describe, it, expect } from 'vitest';
-import { shouldBypassLock } from './billingLockPlugin.js';
+import { shouldBypassLock, collectMutationFieldNames } from './billingLockPlugin.js';
+
+// Parses a GraphQL document and runs it through the same field-collection path the
+// plugin itself uses (document's fragments + the operation's selection set).
+function fieldNamesFor(source) {
+  const document = parse(source);
+  const operation = document.definitions.find((def) => def.kind === 'OperationDefinition');
+  const fragmentsByName = new Map(
+    document.definitions
+      .filter((def) => def.kind === 'FragmentDefinition')
+      .map((def) => [def.name.value, def]),
+  );
+  return [...collectMutationFieldNames(operation.selectionSet, fragmentsByName)];
+}
+
+describe('collectMutationFieldNames', () => {
+  it('collects a direct top-level field', () => {
+    expect(fieldNamesFor('mutation { loginUser(email: "a", password: "b") { user { id } } }')).toEqual([
+      'loginUser',
+    ]);
+  });
+
+  it('resolves a fragment spread wrapping a mutation field', () => {
+    const source = `
+      mutation { ...Evil }
+      fragment Evil on Mutation { addTask(clientId: "1") { id } }
+    `;
+    expect(fieldNamesFor(source)).toEqual(['addTask']);
+  });
+
+  it('resolves an inline fragment wrapping a mutation field', () => {
+    const source = 'mutation { ... on Mutation { addTask(clientId: "1") { id } } }';
+    expect(fieldNamesFor(source)).toEqual(['addTask']);
+  });
+
+  it('does not infinite-loop on a cyclic fragment spread', () => {
+    const source = `
+      mutation { ...A }
+      fragment A on Mutation { ...B addTask(clientId: "1") { id } }
+      fragment B on Mutation { ...A }
+    `;
+    expect(fieldNamesFor(source)).toEqual(['addTask']);
+  });
+});
 
 describe('shouldBypassLock', () => {
   it('bypasses a single allowlisted mutation', () => {
@@ -796,6 +840,39 @@ export function shouldBypassLock(fieldNames) {
   return fieldNames.every((name) => ALLOWED_WHEN_LOCKED.has(name));
 }
 
+// Collects every top-level mutation field actually being executed, resolving
+// FragmentSpread/InlineFragment against the document's fragment definitions. A naive
+// `selectionSet.selections.filter(kind === 'Field')` misses a request shaped like
+// `mutation { ...Evil } fragment Evil on Mutation { deleteTask(...) }` — that selection
+// set has zero direct Field nodes, so an unresolved check would see an empty list and
+// (since shouldBypassLock([]) is true — nothing to block) let the mutation straight
+// through. This is the schema's only lockout enforcement point, so that gap is a full
+// bypass, not a cosmetic one.
+export function collectMutationFieldNames(selectionSet, fragmentsByName, seenFragments = new Set()) {
+  const fieldNames = new Set();
+
+  for (const selection of selectionSet.selections) {
+    if (selection.kind === 'Field') {
+      fieldNames.add(selection.name.value);
+    } else if (selection.kind === 'InlineFragment') {
+      for (const name of collectMutationFieldNames(selection.selectionSet, fragmentsByName, seenFragments)) {
+        fieldNames.add(name);
+      }
+    } else if (selection.kind === 'FragmentSpread') {
+      const fragmentName = selection.name.value;
+      if (seenFragments.has(fragmentName)) continue; // guard against cyclic fragments
+      seenFragments.add(fragmentName);
+      const fragment = fragmentsByName.get(fragmentName);
+      if (!fragment) continue; // invalid document — validation already rejects this before this hook runs
+      for (const name of collectMutationFieldNames(fragment.selectionSet, fragmentsByName, seenFragments)) {
+        fieldNames.add(name);
+      }
+    }
+  }
+
+  return fieldNames;
+}
+
 // Apollo Server plugin: blocks every mutation for a locked group's caller, except the
 // allowlisted ones above. Centralized here — specs building on top of this one (seat
 // limits, storage, AI-notes metering) never need to add their own lockout check to a
@@ -803,20 +880,30 @@ export function shouldBypassLock(fieldNames) {
 const billingLockPlugin = {
   async requestDidStart() {
     return {
-      async didResolveOperation({ operation, contextValue }) {
+      async didResolveOperation({ operation, document, contextValue }) {
         if (!operation || operation.operation !== 'mutation') return;
 
-        const fieldNames = operation.selectionSet.selections
-          .filter((selection) => selection.kind === 'Field')
-          .map((selection) => selection.name.value);
+        const fragmentsByName = new Map(
+          document.definitions
+            .filter((def) => def.kind === 'FragmentDefinition')
+            .map((def) => [def.name.value, def]),
+        );
+        const fieldNames = [...collectMutationFieldNames(operation.selectionSet, fragmentsByName)];
 
         if (shouldBypassLock(fieldNames)) return;
 
         let groupId;
         try {
           groupId = requireCallerGroupId(contextValue);
-        } catch {
-          return; // unauthenticated / no group — the resolver itself enforces auth
+        } catch (err) {
+          // Only the two auth errors requireCallerGroupId can throw mean "not locked
+          // here, the resolver enforces its own auth." Anything else (e.g. a future
+          // change to that helper that can throw for an unrelated reason) must not be
+          // silently treated as "let it through" — re-throw so it surfaces as a real
+          // error instead of masking as a lockout bypass.
+          const code = err instanceof GraphQLError ? err.extensions?.code : undefined;
+          if (code === 'UNAUTHENTICATED' || code === 'NO_GROUP') return;
+          throw err;
         }
 
         if (await isGroupLocked(groupId)) {
@@ -836,7 +923,7 @@ export default billingLockPlugin;
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd crm-proj && npm test`
-Expected: PASS (20 tests total)
+Expected: PASS (24 tests total)
 
 - [ ] **Step 5: Commit**
 
@@ -996,7 +1083,7 @@ describe('stripeWebhookHandler', () => {
 - [ ] **Step 3: Run tests to verify they pass**
 
 Run: `cd crm-proj && npm test`
-Expected: PASS (23 tests total). If the signature tests fail, confirm `STRIPE_WEBHOOK_SECRET` is set in `.env` (Vitest loads it via `vitest.setup.js` from Task 1).
+Expected: PASS (27 tests total). If the signature tests fail, confirm `STRIPE_WEBHOOK_SECRET` is set in `.env` (Vitest loads it via `vitest.setup.js` from Task 1).
 
 - [ ] **Step 4: Commit**
 
