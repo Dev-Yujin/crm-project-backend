@@ -29,6 +29,14 @@ const billingResolvers = {
         throw new GraphQLError('Unknown plan', { extensions: { code: 'BAD_USER_INPUT' } });
       }
 
+      const billing = await getOrCreateBilling(groupId);
+      if (billing.plan && billing.status !== 'canceled') {
+        throw new GraphQLError(
+          'This workspace already has an active subscription. Use "Manage billing" to change plans.',
+          { extensions: { code: 'ALREADY_SUBSCRIBED' } },
+        );
+      }
+
       const customerId = await getOrCreateStripeCustomerId(groupId, async () => {
         const customer = await stripe.customers.create({ metadata: { groupId } });
         return customer.id;

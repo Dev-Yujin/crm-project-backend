@@ -46,8 +46,7 @@ describe('stripeWebhookHandler', () => {
       id: 'sub_123',
       customer: 'cus_123',
       status: 'active',
-      items: { data: [{ price: { id: 'price_starter' } }] },
-      current_period_end: 1893456000,
+      items: { data: [{ price: { id: 'price_starter' }, current_period_end: 1893456000 }] },
     };
     const payload = JSON.stringify({
       id: 'evt_123',
