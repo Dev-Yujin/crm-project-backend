@@ -31,13 +31,11 @@ These limits are enforced by specs 2–4, not here — this spec only stores and
 
 ## Data model
 
-`groups.groupId` is not unique today — multiple admin rows intentionally share a `groupId` (that's how multiple admins belong to one group). A unique index is added so billing can hang a real foreign key off it:
+`groups.groupId` is not unique today, and — verified against live data, not just theory — actually is duplicated: one existing group already has 3 rows sharing a `groupId` (one per admin). That rules out a unique index/FK there entirely, not just "for now": this schema has no single-row representation of "a group" to reference. `group_billing.group_id` is a plain primary key with no foreign key, matching how `members.group_id` already references a group loosely with no FK enforced either:
 
 ```sql
-create unique index groups_group_id_unique on groups ("groupId");
-
 create table group_billing (
-  group_id uuid primary key references groups ("groupId"),
+  group_id uuid primary key,
   stripe_customer_id text unique,
   stripe_subscription_id text unique,
   plan text check (plan in ('starter', 'business', 'scale')),
@@ -155,7 +153,7 @@ New dependency: `stripe` (Node SDK) added to `crm-proj/package.json`.
 ## Rollout checklist
 
 - [ ] Stripe sandbox: 3 Products/Prices created, secret key and Price IDs in `.env` (done)
-- [ ] `group_billing` table + unique index created in Supabase
+- [ ] `group_billing` table created in Supabase
 - [ ] `stripe` package installed; billing typedefs/resolvers wired into `server.js`
 - [ ] `/webhooks/stripe` route registered before the JSON body parser
 - [ ] Apollo lockout plugin registered
