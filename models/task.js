@@ -93,6 +93,23 @@ export const getAllTasks = async (groupId) => {
     }
 };
 
+//Like getAllTasks, but uses the existing groupId index for a server-side filtered
+//read instead of downloading every group's tasks and filtering in memory. Used by
+//taskStorageBreakdown, which is polled from the frontend every 15s — the full-table
+//read getAllTasks does is fine for on-demand calls but not for a recurring poll.
+export const getAllTasksForGroupIndexed = async (groupId) => {
+    try {
+        const tasksSnapshot = await db.ref("tasks").orderByChild("groupId").equalTo(groupId).once("value");
+        const tasksData = tasksSnapshot.val();
+        return tasksData
+            ? Object.entries(tasksData).map(([id, task]) => ({ id, ...task }))
+            : [];
+    } catch (error) {
+        console.error("Error fetching indexed tasks for group:", error);
+        throw error;
+    }
+};
+
 //Fetch only the tasks assigned to a given member, scoped to that member's own group
 export const getTasksForMember = async (memberUuid) => {
     try {

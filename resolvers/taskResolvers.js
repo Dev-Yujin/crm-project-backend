@@ -1,5 +1,6 @@
 import {
     getAllTasks,
+    getAllTasksForGroupIndexed,
     getTasksForMember,
     addTask,
     deleteTask,
@@ -97,7 +98,7 @@ const taskResolvers = {
         },
         taskStorageBreakdown: async (_, __, context) => {
             const groupId = requireCallerGroupId(context);
-            const tasks = await getAllTasks(groupId);
+            const tasks = await getAllTasksForGroupIndexed(groupId);
 
             let imagesBytes = 0;
             let pdfBytes = 0;
@@ -107,12 +108,15 @@ const taskResolvers = {
                 const attachment = task.attachment;
                 if (!attachment) continue;
 
+                const sizeBytes = Number(attachment.sizeBytes);
+                if (!Number.isFinite(sizeBytes)) continue;
+
                 if (IMAGE_TYPES.has(attachment.contentType)) {
-                    imagesBytes += attachment.sizeBytes;
+                    imagesBytes += sizeBytes;
                 } else if (attachment.contentType === 'application/pdf') {
-                    pdfBytes += attachment.sizeBytes;
+                    pdfBytes += sizeBytes;
                 } else if (SPREADSHEET_TYPES.has(attachment.contentType)) {
-                    spreadsheetsBytes += attachment.sizeBytes;
+                    spreadsheetsBytes += sizeBytes;
                 }
             }
 
