@@ -20,6 +20,19 @@ const taskTypeDefs = `#graphql
     reviewedAt: String
   }
 
+  type TaskAttachment {
+    filename: String!
+    contentType: String!
+    sizeBytes: Int!
+    uploadedBy: ID!
+    uploadedAt: String!
+  }
+
+  type UploadTarget {
+    uploadUrl: String!
+    key: String!
+  }
+
   type Task {
     id: ID!
     clientId: ID!
@@ -38,6 +51,7 @@ const taskTypeDefs = `#graphql
     liveLink: String
     source: String
     notes: String
+    attachment: TaskAttachment
     createdAt: String
     submission: Submission
     revisions: [Revision!]!
@@ -48,6 +62,7 @@ const taskTypeDefs = `#graphql
     tasks: [Task!]!
     "Requires a member bearer token. memberUuid arg is accepted for backward compatibility but ignored — identity always comes from the token."
     tasksForMember(memberUuid: ID): [Task!]!
+    taskAttachmentUrl(taskId: ID!): String
   }
 
   type Mutation {
@@ -88,6 +103,9 @@ const taskTypeDefs = `#graphql
     "For a user (admin): memberUuid is required — who the submission is on behalf of. For a member: memberUuid is ignored, always the caller."
     submitTask(taskId: ID!, memberUuid: ID, link: String!, note: String): Task!
     reviewTask(taskId: ID!, comment: String!): Task!
+    requestTaskUploadUrl(taskId: ID!, filename: String!, contentType: String!, sizeBytes: Int!): UploadTarget!
+    confirmTaskAttachment(taskId: ID!, key: String!, filename: String!, contentType: String!, sizeBytes: Int!): Task!
+    removeTaskAttachment(taskId: ID!): Task!
   }
 `;
 

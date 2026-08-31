@@ -20,6 +20,7 @@ const billingTypeDefs = `#graphql
     trialEndsAt: String
     currentPeriodEnd: String
     isLocked: Boolean!
+    storageBytesUsed: Float!
   }
 
   type CheckoutSession { url: String! }

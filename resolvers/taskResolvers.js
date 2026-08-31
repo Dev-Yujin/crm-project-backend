@@ -8,6 +8,13 @@ import {
     reviewTask,
 } from '../models/task.js';
 import { requireUser, requireGroup, requireMember, requireCallerGroupId } from '../utils/requireUser.js';
+import { validateContentType, validateFileSize, checkStorageQuota, validateAttachmentKey } from '../utils/attachments.js';
+import { createUploadUrl, createDownloadUrl, deleteR2Object, headR2ObjectSize } from '../config/r2.js';
+import { getOrCreateStorageUsage, adjustBytesUsed } from '../models/storage.js';
+import { getOrCreateBilling } from '../models/billing.js';
+import { getTaskForGroup, setTaskAttachment } from '../models/taskAttachments.js';
+import { randomUUID } from 'crypto';
+import { GraphQLError } from 'graphql';
 
 const mapSubmission = (submission) => submission && {
     link: submission.link,
@@ -22,6 +29,14 @@ const mapRevision = (revision) => ({
     reviewedBy: revision.reviewedBy,
     reviewedAt: revision.reviewedAt != null ? String(revision.reviewedAt) : null,
 });
+
+const mapAttachment = (attachment) => attachment && {
+    filename: attachment.filename,
+    contentType: attachment.contentType,
+    sizeBytes: attachment.sizeBytes,
+    uploadedBy: attachment.uploadedBy,
+    uploadedAt: attachment.uploadedAt,
+};
 
 const mapTask = (task) => task && {
     id: task.id,
@@ -41,6 +56,7 @@ const mapTask = (task) => task && {
     liveLink: task.liveLink ?? null,
     source: task.source ?? null,
     notes: task.notes ?? null,
+    attachment: mapAttachment(task.attachment),
     createdAt: task.createdAt != null ? String(task.createdAt) : null,
     submission: mapSubmission(task.submission),
     revisions: (task.revisions ?? []).map(mapRevision),
@@ -61,6 +77,16 @@ const taskResolvers = {
             const member = requireMember(context);
             const tasks = await getTasksForMember(member.uuid);
             return tasks.map(mapTask);
+        },
+        taskAttachmentUrl: async (_, { taskId }, context) => {
+            const groupId = requireCallerGroupId(context);
+            const { task } = await getTaskForGroup(taskId, groupId);
+
+            if (!task.attachment) {
+                return null;
+            }
+
+            return createDownloadUrl(task.attachment.key);
         },
     },
     Mutation: {
@@ -103,6 +129,95 @@ const taskResolvers = {
             const groupId = requireGroup(context);
             const task = await reviewTask(taskId, user.id, comment, groupId);
             return mapTask(task);
+        },
+        requestTaskUploadUrl: async (_, { taskId, filename, contentType, sizeBytes }, context) => {
+            const groupId = requireCallerGroupId(context);
+
+            await getTaskForGroup(taskId, groupId);
+
+            validateContentType(contentType);
+            validateFileSize(sizeBytes);
+
+            const [bytesUsed, billing] = await Promise.all([
+                getOrCreateStorageUsage(groupId),
+                getOrCreateBilling(groupId),
+            ]);
+            checkStorageQuota(bytesUsed, sizeBytes, billing.limits.storageGb);
+
+            const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+            const key = `${groupId}/${taskId}/${randomUUID()}-${safeFilename}`;
+            const uploadUrl = await createUploadUrl(key, contentType);
+
+            return { uploadUrl, key };
+        },
+        confirmTaskAttachment: async (_, { taskId, key, filename, contentType, sizeBytes }, context) => {
+            const groupId = requireCallerGroupId(context);
+            const uploadedBy = context?.user ? `admin:${context.user.id}` : `member:${context.member.uuid}`;
+
+            try {
+                validateAttachmentKey(key, groupId, taskId);
+            } catch (err) {
+                throw new GraphQLError(err.message, { extensions: { code: 'BAD_USER_INPUT' } });
+            }
+
+            validateContentType(contentType);
+            validateFileSize(sizeBytes);
+
+            let actualSizeBytes;
+            try {
+                actualSizeBytes = await headR2ObjectSize(key);
+                validateFileSize(actualSizeBytes);
+            } catch (err) {
+                throw new GraphQLError('The uploaded file could not be verified — try uploading again.', {
+                    extensions: { code: 'UPLOAD_NOT_FOUND' },
+                });
+            }
+
+            const { task: existing } = await getTaskForGroup(taskId, groupId);
+            const previousSize = existing.attachment?.sizeBytes ?? 0;
+            const previousKey = existing.attachment?.key ?? null;
+
+            const attachment = {
+                key,
+                filename,
+                contentType,
+                sizeBytes: actualSizeBytes,
+                uploadedBy,
+                uploadedAt: new Date().toISOString(),
+            };
+
+            const updated = await setTaskAttachment(taskId, groupId, attachment);
+            await adjustBytesUsed(groupId, actualSizeBytes - previousSize);
+
+            if (previousKey && previousKey !== key) {
+                await deleteR2Object(previousKey);
+            }
+
+            return mapTask(updated);
+        },
+        removeTaskAttachment: async (_, { taskId }, context) => {
+            const groupId = requireCallerGroupId(context);
+            const callerIdentity = context?.user ? `admin:${context.user.id}` : `member:${context.member.uuid}`;
+            const isAdmin = !!context?.user;
+
+            const { task: existing } = await getTaskForGroup(taskId, groupId);
+            const attachment = existing.attachment;
+
+            if (!attachment) {
+                return mapTask(existing);
+            }
+
+            if (!isAdmin && attachment.uploadedBy !== callerIdentity) {
+                throw new GraphQLError('Only the uploader or an admin can remove this attachment.', {
+                    extensions: { code: 'FORBIDDEN' },
+                });
+            }
+
+            const updated = await setTaskAttachment(taskId, groupId, null);
+            await adjustBytesUsed(groupId, -attachment.sizeBytes);
+            await deleteR2Object(attachment.key);
+
+            return mapTask(updated);
         },
     },
 };

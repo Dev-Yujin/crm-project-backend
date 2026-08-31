@@ -45,7 +45,7 @@ export const validateServiceForClient = async (clientId, serviceId, groupId) => 
     }
 };
 
-const mapRevisions = (revisions) =>
+export const mapRevisions = (revisions) =>
     revisions ? Object.entries(revisions).map(([id, revision]) => ({ id, ...revision })) : [];
 
 //Trims free text and stores null rather than "" — used for `source`

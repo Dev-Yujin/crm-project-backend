@@ -7,6 +7,7 @@ import {
   getOrCreateStripeCustomerId,
   getStripeCustomerId,
 } from '../models/billing.js';
+import { getOrCreateStorageUsage } from '../models/storage.js';
 
 function frontendOrigin() {
   return (process.env.FRONTEND_ORIGIN ?? 'http://localhost:5173').split(',')[0].trim();
@@ -16,7 +17,11 @@ const billingResolvers = {
   Query: {
     myBilling: async (_, __, context) => {
       const groupId = requireCallerGroupId(context);
-      return getOrCreateBilling(groupId);
+      const [billing, storageBytesUsed] = await Promise.all([
+        getOrCreateBilling(groupId),
+        getOrCreateStorageUsage(groupId),
+      ]);
+      return { ...billing, storageBytesUsed };
     },
     plans: () => Object.keys(PLANS).map(planLimitsResponse),
   },
