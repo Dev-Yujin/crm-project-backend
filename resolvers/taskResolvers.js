@@ -8,6 +8,11 @@ import {
     reviewTask,
 } from '../models/task.js';
 import { requireUser, requireGroup, requireMember, requireCallerGroupId } from '../utils/requireUser.js';
+import { validateContentType, validateFileSize, checkStorageQuota } from '../utils/attachments.js';
+import { createUploadUrl } from '../config/r2.js';
+import { getOrCreateStorageUsage } from '../models/storage.js';
+import { getOrCreateBilling } from '../models/billing.js';
+import { randomUUID } from 'crypto';
 
 const mapSubmission = (submission) => submission && {
     link: submission.link,
@@ -103,6 +108,24 @@ const taskResolvers = {
             const groupId = requireGroup(context);
             const task = await reviewTask(taskId, user.id, comment, groupId);
             return mapTask(task);
+        },
+        requestTaskUploadUrl: async (_, { taskId, filename, contentType, sizeBytes }, context) => {
+            const groupId = requireCallerGroupId(context);
+
+            validateContentType(contentType);
+            validateFileSize(sizeBytes);
+
+            const [bytesUsed, billing] = await Promise.all([
+                getOrCreateStorageUsage(groupId),
+                getOrCreateBilling(groupId),
+            ]);
+            checkStorageQuota(bytesUsed, sizeBytes, billing.limits.storageGb);
+
+            const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+            const key = `${groupId}/${taskId}/${randomUUID()}-${safeFilename}`;
+            const uploadUrl = await createUploadUrl(key, contentType);
+
+            return { uploadUrl, key };
         },
     },
 };
