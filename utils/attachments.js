@@ -36,3 +36,14 @@ export function checkStorageQuota(bytesUsed, incomingSizeBytes, storageGbLimit) 
     );
   }
 }
+
+// Enforces the R2 key namespace requestTaskUploadUrl builds (`${groupId}/${taskId}/...`).
+// confirmTaskAttachment must call this before trusting a client-supplied key for anything —
+// without it, a caller could point a task's attachment at an arbitrary object, including
+// one belonging to a different group's task.
+export function validateAttachmentKey(key, groupId, taskId) {
+  const prefix = `${groupId}/${taskId}/`;
+  if (typeof key !== 'string' || !key.startsWith(prefix)) {
+    throw new Error('Invalid upload key for this task.');
+  }
+}

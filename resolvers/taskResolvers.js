@@ -8,8 +8,8 @@ import {
     reviewTask,
 } from '../models/task.js';
 import { requireUser, requireGroup, requireMember, requireCallerGroupId } from '../utils/requireUser.js';
-import { validateContentType, validateFileSize, checkStorageQuota } from '../utils/attachments.js';
-import { createUploadUrl, createDownloadUrl, deleteR2Object } from '../config/r2.js';
+import { validateContentType, validateFileSize, checkStorageQuota, validateAttachmentKey } from '../utils/attachments.js';
+import { createUploadUrl, createDownloadUrl, deleteR2Object, headR2ObjectSize } from '../config/r2.js';
 import { getOrCreateStorageUsage, adjustBytesUsed } from '../models/storage.js';
 import { getOrCreateBilling } from '../models/billing.js';
 import { getTaskForGroup, setTaskAttachment } from '../models/taskAttachments.js';
@@ -133,6 +133,8 @@ const taskResolvers = {
         requestTaskUploadUrl: async (_, { taskId, filename, contentType, sizeBytes }, context) => {
             const groupId = requireCallerGroupId(context);
 
+            await getTaskForGroup(taskId, groupId);
+
             validateContentType(contentType);
             validateFileSize(sizeBytes);
 
@@ -152,6 +154,25 @@ const taskResolvers = {
             const groupId = requireCallerGroupId(context);
             const uploadedBy = context?.user ? `admin:${context.user.id}` : `member:${context.member.uuid}`;
 
+            try {
+                validateAttachmentKey(key, groupId, taskId);
+            } catch (err) {
+                throw new GraphQLError(err.message, { extensions: { code: 'BAD_USER_INPUT' } });
+            }
+
+            validateContentType(contentType);
+            validateFileSize(sizeBytes);
+
+            let actualSizeBytes;
+            try {
+                actualSizeBytes = await headR2ObjectSize(key);
+                validateFileSize(actualSizeBytes);
+            } catch (err) {
+                throw new GraphQLError('The uploaded file could not be verified — try uploading again.', {
+                    extensions: { code: 'UPLOAD_NOT_FOUND' },
+                });
+            }
+
             const { task: existing } = await getTaskForGroup(taskId, groupId);
             const previousSize = existing.attachment?.sizeBytes ?? 0;
             const previousKey = existing.attachment?.key ?? null;
@@ -160,15 +181,15 @@ const taskResolvers = {
                 key,
                 filename,
                 contentType,
-                sizeBytes,
+                sizeBytes: actualSizeBytes,
                 uploadedBy,
                 uploadedAt: new Date().toISOString(),
             };
 
             const updated = await setTaskAttachment(taskId, groupId, attachment);
-            await adjustBytesUsed(groupId, sizeBytes - previousSize);
+            await adjustBytesUsed(groupId, actualSizeBytes - previousSize);
 
-            if (previousKey) {
+            if (previousKey && previousKey !== key) {
                 await deleteR2Object(previousKey);
             }
 

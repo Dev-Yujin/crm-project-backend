@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const REQUIRED_ENV_VARS = ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET_NAME'];
@@ -46,4 +46,16 @@ export async function deleteR2Object(key) {
     Bucket: process.env.R2_BUCKET_NAME,
     Key: key,
   }));
+}
+
+// Returns the real byte size of an uploaded object straight from R2 — used to verify a
+// confirmTaskAttachment call against reality rather than trusting the client-declared
+// sizeBytes, which the presigned PUT URL deliberately doesn't enforce (see createUploadUrl's
+// comment above). Throws if the object doesn't exist (e.g. the PUT never actually completed).
+export async function headR2ObjectSize(key) {
+  const result = await client.send(new HeadObjectCommand({
+    Bucket: process.env.R2_BUCKET_NAME,
+    Key: key,
+  }));
+  return result.ContentLength;
 }

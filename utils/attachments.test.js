@@ -3,6 +3,7 @@ import {
   validateContentType,
   validateFileSize,
   checkStorageQuota,
+  validateAttachmentKey,
   MAX_FILE_SIZE_BYTES,
 } from './attachments.js';
 
@@ -48,5 +49,19 @@ describe('checkStorageQuota', () => {
 
   it('rejects an upload that would exceed the quota', () => {
     expect(() => checkStorageQuota(9 * oneGb, 2 * oneGb, 10)).toThrow(/quota/i);
+  });
+});
+
+describe('validateAttachmentKey', () => {
+  it('accepts a key correctly namespaced under the group and task', () => {
+    expect(() => validateAttachmentKey('group1/task1/uuid-file.pdf', 'group1', 'task1')).not.toThrow();
+  });
+
+  it('rejects a key belonging to a different group', () => {
+    expect(() => validateAttachmentKey('otherGroup/task1/uuid-file.pdf', 'group1', 'task1')).toThrow(/invalid/i);
+  });
+
+  it('rejects a key belonging to a different task', () => {
+    expect(() => validateAttachmentKey('group1/otherTask/uuid-file.pdf', 'group1', 'task1')).toThrow(/invalid/i);
   });
 });
