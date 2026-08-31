@@ -7,6 +7,7 @@ const memberTypeDefs = `#graphql
     createdAt: String
     inviteSent: Boolean
     inviteError: String
+    avatarBase64: String
   }
 
   "token is set as an httpOnly cookie (see MEMBER_SECURITY_INTEGRATION.md) — never returned here"
@@ -23,8 +24,8 @@ const memberTypeDefs = `#graphql
   type Mutation {
     addMember(username: String!, email: String!, password: String!, sendInvite: Boolean): Member!
     deleteMember(uuid: ID!): Member!
-    "For a user (admin): uuid is required, edits a member in the caller's own group. For a member: uuid is ignored, always edits the caller's own profile."
-    editMemberProfile(uuid: ID, username: String, email: String, password: String): Member!
+    "For a user (admin): uuid is required, edits a member in the caller's own group. For a member: uuid is ignored, always edits the caller's own profile. avatarBase64: null explicitly removes the photo; omit it to leave the photo untouched."
+    editMemberProfile(uuid: ID, username: String, email: String, password: String, avatarBase64: String): Member!
     loginMember(email: String!, password: String!): MemberAuthPayload!
     "Clears the member auth cookie server-side."
     logoutMember: Boolean!

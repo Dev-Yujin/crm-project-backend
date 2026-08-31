@@ -12,6 +12,7 @@ import { sendMemberInviteEmail } from '../utils/mailer.js';
 import { requireUser, requireGroup, requireMember } from '../utils/requireUser.js';
 import { MEMBER_COOKIE_NAME, memberCookieOptions } from '../utils/memberCookie.js';
 import { GraphQLError } from 'graphql';
+import { validateAvatarBase64 } from '../utils/avatar.js';
 
 const mapMember = (row) => row && {
     uuid: row.uuid,
@@ -19,6 +20,7 @@ const mapMember = (row) => row && {
     email: row.email,
     groupId: row.group_id ?? null,
     createdAt: row.created_at?.toISOString?.() ?? row.created_at ?? null,
+    avatarBase64: row.avatar_base64 ?? null,
 };
 
 const memberResolvers = {
@@ -102,14 +104,21 @@ const memberResolvers = {
         // Called by both actor types: a user (admin) editing a member they manage — uuid arg
         // is required and scoped to the caller's own group — or a member editing their OWN
         // profile, where the uuid arg is ignored and identity comes from their token instead.
-        editMemberProfile: async (_, { uuid, username, email, password }, context) => {
+        editMemberProfile: async (_, { uuid, username, email, password, avatarBase64 }, context) => {
+            if (avatarBase64 !== undefined) {
+                try {
+                    validateAvatarBase64(avatarBase64);
+                } catch (err) {
+                    throw new GraphQLError(err.message, { extensions: { code: 'BAD_USER_INPUT' } });
+                }
+            }
             if (context?.user) {
                 const groupId = requireGroup(context);
-                const member = await editMemberProfile(uuid, { username, email, password }, groupId);
+                const member = await editMemberProfile(uuid, { username, email, password, avatarBase64 }, groupId);
                 return mapMember(member);
             }
             const caller = requireMember(context);
-            const member = await editMemberProfile(caller.uuid, { username, email, password });
+            const member = await editMemberProfile(caller.uuid, { username, email, password, avatarBase64 });
             return mapMember(member);
         },
         // Admin action: force-logout a member by invalidating every outstanding token they hold.
