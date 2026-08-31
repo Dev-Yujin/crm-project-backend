@@ -321,13 +321,19 @@ const userResolvers = {
         updateUserProfile: async (_, { name, avatarBase64 }, context) => {
             const user = requireUser(context);
 
+            // Validate before writing anything (avatar validation is pure, no I/O — see
+            // utils/avatar.js), then apply the less reliable, network-dependent write
+            // (Supabase Auth) BEFORE the Postgres write. If the Supabase Auth call fails,
+            // nothing has been written yet, so the thrown error means "nothing changed"
+            // rather than "the avatar silently saved but the name didn't" — these two
+            // stores can't share a transaction, so this ordering is what keeps a failure
+            // honest instead of leaving an unreported partial update.
             if (avatarBase64 !== undefined) {
                 try {
                     validateAvatarBase64(avatarBase64);
                 } catch (err) {
                     throw new GraphQLError(err.message, { extensions: { code: 'BAD_USER_INPUT' } });
                 }
-                await updateUserAvatar(user.id, avatarBase64);
             }
 
             if (name !== undefined) {
@@ -336,6 +342,10 @@ const userResolvers = {
                 if (error) {
                     throw error;
                 }
+            }
+
+            if (avatarBase64 !== undefined) {
+                await updateUserAvatar(user.id, avatarBase64);
             }
 
             const freshAvatarBase64 = await getUserAvatar(user.id);
