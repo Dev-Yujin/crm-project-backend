@@ -33,6 +33,12 @@ const taskTypeDefs = `#graphql
     key: String!
   }
 
+  type StorageBreakdown {
+    imagesBytes: Float!
+    pdfBytes: Float!
+    spreadsheetsBytes: Float!
+  }
+
   type Task {
     id: ID!
     clientId: ID!
@@ -63,6 +69,7 @@ const taskTypeDefs = `#graphql
     "Requires a member bearer token. memberUuid arg is accepted for backward compatibility but ignored — identity always comes from the token."
     tasksForMember(memberUuid: ID): [Task!]!
     taskAttachmentUrl(taskId: ID!): String
+    taskStorageBreakdown: StorageBreakdown!
   }
 
   type Mutation {

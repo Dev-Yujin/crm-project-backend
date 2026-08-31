@@ -30,6 +30,13 @@ const mapRevision = (revision) => ({
     reviewedAt: revision.reviewedAt != null ? String(revision.reviewedAt) : null,
 });
 
+const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+const SPREADSHEET_TYPES = new Set([
+    'text/csv',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+]);
+
 const mapAttachment = (attachment) => attachment && {
     filename: attachment.filename,
     contentType: attachment.contentType,
@@ -87,6 +94,29 @@ const taskResolvers = {
             }
 
             return createDownloadUrl(task.attachment.key);
+        },
+        taskStorageBreakdown: async (_, __, context) => {
+            const groupId = requireCallerGroupId(context);
+            const tasks = await getAllTasks(groupId);
+
+            let imagesBytes = 0;
+            let pdfBytes = 0;
+            let spreadsheetsBytes = 0;
+
+            for (const task of tasks) {
+                const attachment = task.attachment;
+                if (!attachment) continue;
+
+                if (IMAGE_TYPES.has(attachment.contentType)) {
+                    imagesBytes += attachment.sizeBytes;
+                } else if (attachment.contentType === 'application/pdf') {
+                    pdfBytes += attachment.sizeBytes;
+                } else if (SPREADSHEET_TYPES.has(attachment.contentType)) {
+                    spreadsheetsBytes += attachment.sizeBytes;
+                }
+            }
+
+            return { imagesBytes, pdfBytes, spreadsheetsBytes };
         },
     },
     Mutation: {
