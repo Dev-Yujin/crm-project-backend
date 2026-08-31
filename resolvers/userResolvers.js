@@ -3,7 +3,7 @@ import { fetchCurrentUser } from '../models/userFunctions.js';
 import { createRequestSupabaseClient } from '../utils/supabaseServerClient.js';
 import { requireUser } from '../utils/requireUser.js';
 import { getUserAvatar, updateUserAvatar } from '../models/groups.js';
-import { validateAvatarBase64 } from '../utils/avatar.js';
+import { validateAvatarBase64, validateDisplayName } from '../utils/avatar.js';
 
 const mapUser = (user, avatarBase64 = null) => user && {
     id: user.id,
@@ -74,7 +74,7 @@ const userResolvers = {
         updateUserProfile: async (_, { name, avatarBase64 }, context) => {
             const user = requireUser(context);
 
-            // Validate before writing anything (avatar validation is pure, no I/O — see
+            // Validate before writing anything (both validators are pure, no I/O — see
             // utils/avatar.js), then apply the less reliable, network-dependent write
             // (Supabase Auth) BEFORE the Postgres write. If the Supabase Auth call fails,
             // nothing has been written yet, so the thrown error means "nothing changed"
@@ -89,9 +89,15 @@ const userResolvers = {
                 }
             }
 
+            let trimmedName;
             if (name !== undefined) {
+                try {
+                    trimmedName = validateDisplayName(name);
+                } catch (err) {
+                    throw new GraphQLError(err.message, { extensions: { code: 'BAD_USER_INPUT' } });
+                }
                 const supabase = createRequestSupabaseClient(context.req, context.res);
-                const { error } = await supabase.auth.updateUser({ data: { name } });
+                const { error } = await supabase.auth.updateUser({ data: { name: trimmedName } });
                 if (error) {
                     throw error;
                 }
@@ -103,7 +109,7 @@ const userResolvers = {
 
             const freshAvatarBase64 = await getUserAvatar(user.id);
             return mapUser(
-                { ...user, user_metadata: { ...user.user_metadata, ...(name !== undefined ? { name } : {}) } },
+                { ...user, user_metadata: { ...user.user_metadata, ...(trimmedName !== undefined ? { name: trimmedName } : {}) } },
                 freshAvatarBase64,
             );
         },

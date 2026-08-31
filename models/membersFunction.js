@@ -37,7 +37,7 @@ export const loginMember = async (email, password) => {
 export const fetchMemberFromToken = async (token) => {
     try {
         const decoded = verifyMemberToken(token);
-        const query = 'SELECT uuid, username, email, group_id, created_at, token_version, avatar_base64 FROM members WHERE uuid = $1';
+        const query = 'SELECT uuid, username, email, group_id, created_at, token_version FROM members WHERE uuid = $1';
         const result = await pool.query(query, [decoded.uuid]);
 
         if (result.rows.length === 0) {
@@ -174,4 +174,13 @@ export const editMemberProfile = async (uuid, { username, email, password, avata
         console.error('Error editing member profile:', error);
         throw error;
     }
+};
+
+//Reads a member's own profile-picture data URL, if any — fetched on demand (not
+//included in fetchMemberFromToken's per-request SELECT) to avoid loading the blob on
+//every single authenticated member request, matching how the admin side's currentUser
+//fetches its avatar via getUserAvatar rather than carrying it in context.
+export const getMemberAvatar = async (uuid) => {
+    const result = await pool.query('SELECT avatar_base64 FROM members WHERE uuid = $1', [uuid]);
+    return result.rows[0]?.avatar_base64 ?? null;
 };

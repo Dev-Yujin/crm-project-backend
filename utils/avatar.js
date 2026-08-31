@@ -17,3 +17,22 @@ export function validateAvatarBase64(value) {
     );
   }
 }
+
+const MAX_NAME_LENGTH = 200;
+
+// Throws if a display name is missing, all-whitespace, or unreasonably long. Returns the
+// trimmed value — callers should store/use the RETURN value, not their original input,
+// so " Alice " isn't persisted with stray whitespace and "   " doesn't pass as non-empty.
+export function validateDisplayName(name) {
+  if (typeof name !== 'string') {
+    throw new Error('name must be a string');
+  }
+  const trimmed = name.trim();
+  if (trimmed.length === 0) {
+    throw new Error('name cannot be empty');
+  }
+  if (trimmed.length > MAX_NAME_LENGTH) {
+    throw new Error(`name is too long (${trimmed.length} characters, max ${MAX_NAME_LENGTH})`);
+  }
+  return trimmed;
+}

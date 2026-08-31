@@ -69,9 +69,16 @@ export const getMyGroup = async (userId) => {
     return { groupId: result.rows[0].groupId, joinCode: result.rows[0].join_code };
 };
 
-//Sets or clears the caller's own profile-picture data URL. null clears it.
+//Sets or clears the caller's own profile-picture data URL. null clears it. Throws if no
+//groups row exists for this user — the auto-creation trigger makes that unlikely, but a
+//silent 0-row UPDATE would otherwise report success while writing nothing, which is
+//exactly the kind of gap the write-ordering in updateUserProfile (resolvers/userResolvers.js)
+//already exists to avoid for the other half of a combined name+avatar update.
 export const updateUserAvatar = async (userId, avatarBase64) => {
-    await pool.query('UPDATE groups SET avatar_base64 = $1 WHERE "userId" = $2', [avatarBase64, userId]);
+    const result = await pool.query('UPDATE groups SET avatar_base64 = $1 WHERE "userId" = $2', [avatarBase64, userId]);
+    if (result.rowCount === 0) {
+        throw new Error(`No groups row found for user ${userId}`);
+    }
 };
 
 //Reads the caller's own profile-picture data URL, if any.

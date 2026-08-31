@@ -161,7 +161,7 @@ async function main() {
   app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), stripeWebhookHandler);
 
   app.use(
-    express.json(),
+    express.json({ limit: '400kb' }),
     expressMiddleware(server, {
       context: async ({ req, res }) => ({ ...(await resolveContext(req, res)), res, req }),
     })

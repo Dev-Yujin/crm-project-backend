@@ -6,6 +6,7 @@ import {
     loginMember,
     fetchMemberFromToken,
     revokeMemberSessions,
+    getMemberAvatar,
 } from '../models/membersFunction.js';
 import { getDecryptedEmailCredentials } from '../models/emailCredentials.js';
 import { sendMemberInviteEmail } from '../utils/mailer.js';
@@ -14,13 +15,13 @@ import { MEMBER_COOKIE_NAME, memberCookieOptions } from '../utils/memberCookie.j
 import { GraphQLError } from 'graphql';
 import { validateAvatarBase64 } from '../utils/avatar.js';
 
-const mapMember = (row) => row && {
+const mapMember = (row, avatarBase64) => row && {
     uuid: row.uuid,
     username: row.username,
     email: row.email,
     groupId: row.group_id ?? null,
     createdAt: row.created_at?.toISOString?.() ?? row.created_at ?? null,
-    avatarBase64: row.avatar_base64 ?? null,
+    avatarBase64: avatarBase64 !== undefined ? avatarBase64 : (row.avatar_base64 ?? null),
 };
 
 const memberResolvers = {
@@ -35,13 +36,15 @@ const memberResolvers = {
         // SECURITY_BACKEND_ACTION_PLAN.md #4.
         currentMember: async (_, { token }, context) => {
             if (context?.member) {
-                return mapMember(context.member);
+                const avatarBase64 = await getMemberAvatar(context.member.uuid);
+                return mapMember(context.member, avatarBase64);
             }
             if (!token) {
                 return null;
             }
             const member = await fetchMemberFromToken(token);
-            return mapMember(member);
+            const avatarBase64 = await getMemberAvatar(member.uuid);
+            return mapMember(member, avatarBase64);
         },
     },
     Mutation: {
