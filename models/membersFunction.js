@@ -79,7 +79,7 @@ export const revokeMemberSessions = async (uuid, groupId) => {
 //Fetch all members belonging to a group
 export const getAllMembers = async (groupId) => {
     try {
-        const query = 'SELECT uuid, username, email, group_id, created_at FROM members WHERE group_id = $1';
+        const query = 'SELECT uuid, username, email, group_id, created_at, avatar_base64 FROM members WHERE group_id = $1';
         const result = await pool.query(query, [groupId]);
         return result.rows;
     } catch (error) {

@@ -31,7 +31,7 @@ export const joinGroupByCode = async (userId, joinCode) => {
 //Fetch every user (Supabase Auth account) that belongs to a given group
 export const getGroupUsers = async (groupId) => {
     const result = await pool.query(
-        `SELECT u.id, u.email, u.raw_user_meta_data->>'name' AS name, u.created_at
+        `SELECT u.id, u.email, u.raw_user_meta_data->>'name' AS name, u.created_at, g.avatar_base64
          FROM groups g
          JOIN auth.users u ON u.id = g."userId"
          WHERE g."groupId" = $1

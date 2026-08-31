@@ -9,6 +9,7 @@ const groupTypeDefs = `#graphql
     email: String
     name: String
     createdAt: String
+    avatarBase64: String
   }
 
   type Query {

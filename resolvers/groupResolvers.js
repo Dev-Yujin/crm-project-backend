@@ -6,6 +6,7 @@ const mapGroupUser = (row) => ({
     email: row.email,
     name: row.name ?? null,
     createdAt: row.created_at?.toISOString?.() ?? row.created_at ?? null,
+    avatarBase64: row.avatar_base64 ?? null,
 });
 
 const groupResolvers = {
