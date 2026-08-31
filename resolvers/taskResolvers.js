@@ -14,6 +14,7 @@ import { getOrCreateStorageUsage, adjustBytesUsed } from '../models/storage.js';
 import { getOrCreateBilling } from '../models/billing.js';
 import { getTaskForGroup, setTaskAttachment } from '../models/taskAttachments.js';
 import { randomUUID } from 'crypto';
+import { GraphQLError } from 'graphql';
 
 const mapSubmission = (submission) => submission && {
     link: submission.link,
@@ -160,6 +161,30 @@ const taskResolvers = {
             if (previousKey) {
                 await deleteR2Object(previousKey);
             }
+
+            return mapTask(updated);
+        },
+        removeTaskAttachment: async (_, { taskId }, context) => {
+            const groupId = requireCallerGroupId(context);
+            const callerIdentity = context?.user ? `admin:${context.user.id}` : `member:${context.member.uuid}`;
+            const isAdmin = !!context?.user;
+
+            const { task: existing } = await getTaskForGroup(taskId, groupId);
+            const attachment = existing.attachment;
+
+            if (!attachment) {
+                return mapTask(existing);
+            }
+
+            if (!isAdmin && attachment.uploadedBy !== callerIdentity) {
+                throw new GraphQLError('Only the uploader or an admin can remove this attachment.', {
+                    extensions: { code: 'FORBIDDEN' },
+                });
+            }
+
+            const updated = await setTaskAttachment(taskId, groupId, null);
+            await adjustBytesUsed(groupId, -attachment.sizeBytes);
+            await deleteR2Object(attachment.key);
 
             return mapTask(updated);
         },

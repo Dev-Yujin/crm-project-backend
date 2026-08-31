@@ -104,6 +104,7 @@ const taskTypeDefs = `#graphql
     reviewTask(taskId: ID!, comment: String!): Task!
     requestTaskUploadUrl(taskId: ID!, filename: String!, contentType: String!, sizeBytes: Int!): UploadTarget!
     confirmTaskAttachment(taskId: ID!, key: String!, filename: String!, contentType: String!, sizeBytes: Int!): Task!
+    removeTaskAttachment(taskId: ID!): Task!
   }
 `;
 
