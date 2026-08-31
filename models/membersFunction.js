@@ -8,7 +8,7 @@ export const loginMember = async (email, password) => {
     checkRateLimit(`loginMember:${email.toLowerCase()}`);
 
     try {
-        const query = 'SELECT uuid, username, email, password, group_id, token_version FROM members WHERE email = $1';
+        const query = 'SELECT uuid, username, email, password, group_id, token_version, avatar_base64 FROM members WHERE email = $1';
         const result = await pool.query(query, [email]);
 
         if (result.rows.length === 0) {
@@ -124,7 +124,7 @@ export const deleteMember = async (uuid, groupId) => {
 //    passes caller.uuid, never client input), groupId omitted (self-edit needs no extra check)
 //  - a user (admin) editing a member they manage: groupId is required and enforced here, so
 //    an admin can't reach into another group's member by guessing a uuid
-export const editMemberProfile = async (uuid, { username, email, password } = {}, groupId = null) => {
+export const editMemberProfile = async (uuid, { username, email, password, avatarBase64 } = {}, groupId = null) => {
     try {
         const fields = [];
         const values = [];
@@ -145,6 +145,10 @@ export const editMemberProfile = async (uuid, { username, email, password } = {}
             //including one forced by an admin resetting it on their behalf.
             fields.push(`token_version = token_version + 1`);
         }
+        if (avatarBase64 !== undefined) {
+            fields.push(`avatar_base64 = $${i++}`);
+            values.push(avatarBase64);
+        }
 
         if (fields.length === 0) {
             throw new Error('No fields provided to update');
@@ -158,7 +162,7 @@ export const editMemberProfile = async (uuid, { username, email, password } = {}
             query += ` AND group_id = $${i + 1}`;
         }
 
-        query += ' RETURNING uuid, username, email, group_id, created_at';
+        query += ' RETURNING uuid, username, email, group_id, created_at, avatar_base64';
         const result = await pool.query(query, values);
 
         if (result.rows.length === 0) {
@@ -170,4 +174,13 @@ export const editMemberProfile = async (uuid, { username, email, password } = {}
         console.error('Error editing member profile:', error);
         throw error;
     }
+};
+
+//Reads a member's own profile-picture data URL, if any — fetched on demand (not
+//included in fetchMemberFromToken's per-request SELECT) to avoid loading the blob on
+//every single authenticated member request, matching how the admin side's currentUser
+//fetches its avatar via getUserAvatar rather than carrying it in context.
+export const getMemberAvatar = async (uuid) => {
+    const result = await pool.query('SELECT avatar_base64 FROM members WHERE uuid = $1', [uuid]);
+    return result.rows[0]?.avatar_base64 ?? null;
 };
