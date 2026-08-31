@@ -9,7 +9,7 @@ import {
 } from '../models/task.js';
 import { requireUser, requireGroup, requireMember, requireCallerGroupId } from '../utils/requireUser.js';
 import { validateContentType, validateFileSize, checkStorageQuota } from '../utils/attachments.js';
-import { createUploadUrl, deleteR2Object } from '../config/r2.js';
+import { createUploadUrl, createDownloadUrl, deleteR2Object } from '../config/r2.js';
 import { getOrCreateStorageUsage, adjustBytesUsed } from '../models/storage.js';
 import { getOrCreateBilling } from '../models/billing.js';
 import { getTaskForGroup, setTaskAttachment } from '../models/taskAttachments.js';
@@ -77,6 +77,16 @@ const taskResolvers = {
             const member = requireMember(context);
             const tasks = await getTasksForMember(member.uuid);
             return tasks.map(mapTask);
+        },
+        taskAttachmentUrl: async (_, { taskId }, context) => {
+            const groupId = requireCallerGroupId(context);
+            const { task } = await getTaskForGroup(taskId, groupId);
+
+            if (!task.attachment) {
+                return null;
+            }
+
+            return createDownloadUrl(task.attachment.key);
         },
     },
     Mutation: {
