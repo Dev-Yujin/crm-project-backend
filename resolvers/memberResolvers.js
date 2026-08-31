@@ -29,7 +29,7 @@ const memberResolvers = {
         members: async (_, __, context) => {
             const groupId = requireGroup(context);
             const members = await getAllMembers(groupId);
-            return members.map(mapMember);
+            return members.map((row) => mapMember(row));
         },
         // Prefers the Authorization header (see server.js context); the `token` argument is
         // accepted only as a fallback for callers not yet migrated to the header — see
