@@ -1,5 +1,6 @@
 import {
     getAllTasks,
+    getAllTasksForGroupIndexed,
     getTasksForMember,
     addTask,
     deleteTask,
@@ -29,6 +30,13 @@ const mapRevision = (revision) => ({
     reviewedBy: revision.reviewedBy,
     reviewedAt: revision.reviewedAt != null ? String(revision.reviewedAt) : null,
 });
+
+const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+const SPREADSHEET_TYPES = new Set([
+    'text/csv',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+]);
 
 const mapAttachment = (attachment) => attachment && {
     filename: attachment.filename,
@@ -87,6 +95,32 @@ const taskResolvers = {
             }
 
             return createDownloadUrl(task.attachment.key);
+        },
+        taskStorageBreakdown: async (_, __, context) => {
+            const groupId = requireCallerGroupId(context);
+            const tasks = await getAllTasksForGroupIndexed(groupId);
+
+            let imagesBytes = 0;
+            let pdfBytes = 0;
+            let spreadsheetsBytes = 0;
+
+            for (const task of tasks) {
+                const attachment = task.attachment;
+                if (!attachment) continue;
+
+                const sizeBytes = Number(attachment.sizeBytes);
+                if (!Number.isFinite(sizeBytes)) continue;
+
+                if (IMAGE_TYPES.has(attachment.contentType)) {
+                    imagesBytes += sizeBytes;
+                } else if (attachment.contentType === 'application/pdf') {
+                    pdfBytes += sizeBytes;
+                } else if (SPREADSHEET_TYPES.has(attachment.contentType)) {
+                    spreadsheetsBytes += sizeBytes;
+                }
+            }
+
+            return { imagesBytes, pdfBytes, spreadsheetsBytes };
         },
     },
     Mutation: {
