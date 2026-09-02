@@ -28,7 +28,7 @@ import emailCredentialsResolvers from './resolvers/emailCredentialsResolvers.js'
 import billingTypeDefs from './typedefs/billingTypeDefs.js';
 import billingResolvers from './resolvers/billingResolvers.js';
 import billingLockPlugin from './utils/billingLockPlugin.js';
-import { stripeWebhookHandler } from './routes/stripeWebhook.js';
+import { paddleWebhookHandler } from './routes/paddleWebhook.js';
 import { fetchCurrentUser } from './models/userFunctions.js';
 import { fetchUserGroupId } from './utils/groups.js';
 import { fetchMemberFromToken } from './models/membersFunction.js';
@@ -155,10 +155,10 @@ async function main() {
     res.redirect(`${frontendUrl}/app`);
   });
 
-  // Stripe needs the exact raw request bytes to verify the signature — express.raw here,
+  // Paddle needs the exact raw request bytes to verify the signature — express.raw here,
   // NOT express.json(), and this must be registered before the app-wide express.json()
   // below or that would consume/reparse the body first.
-  app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), stripeWebhookHandler);
+  app.post('/webhooks/paddle', express.raw({ type: 'application/json' }), paddleWebhookHandler);
 
   app.use(
     express.json({ limit: '400kb' }),

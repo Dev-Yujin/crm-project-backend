@@ -23,7 +23,6 @@ const billingTypeDefs = `#graphql
     storageBytesUsed: Float!
   }
 
-  type CheckoutSession { url: String! }
   type PortalSession { url: String! }
 
   type Query {
@@ -34,9 +33,7 @@ const billingTypeDefs = `#graphql
   }
 
   type Mutation {
-    "Admin-only. Returns a Stripe Checkout URL to redirect the browser to."
-    createCheckoutSession(plan: PlanTier!): CheckoutSession!
-    "Admin-only. Returns a Stripe Billing Portal URL to redirect the browser to."
+    "Admin-only. Returns a Paddle customer-portal URL to redirect the browser to."
     createBillingPortalSession: PortalSession!
   }
 `;
