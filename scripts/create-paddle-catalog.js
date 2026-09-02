@@ -4,7 +4,7 @@
 // copy the printed price ids into config/plans.js's paddlePriceId fields (and into
 // crm-frontend's src/lib/paddleTiers.ts), and don't run it again.
 //
-// Usage: node scripts/create-paddle-catalog.js
+// Usage: node --env-file=.env scripts/create-paddle-catalog.js
 
 import { paddle } from '../config/paddle.js';
 import { PLANS } from '../config/plans.js';
