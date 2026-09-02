@@ -2,19 +2,25 @@ import { describe, it, expect } from 'vitest';
 import { PLANS, planByPriceId, planLimitsResponse } from './plans.js';
 
 describe('planByPriceId', () => {
-  it('finds the plan key for a known price id', () => {
-    expect(planByPriceId(PLANS.starter.stripePriceId)).toBe('starter');
-    expect(planByPriceId(PLANS.business.stripePriceId)).toBe('business');
-    expect(planByPriceId(PLANS.scale.stripePriceId)).toBe('scale');
+  it('finds the plan key for a known monthly price id', () => {
+    expect(planByPriceId(PLANS.starter.paddlePriceId.month)).toBe('starter');
+    expect(planByPriceId(PLANS.business.paddlePriceId.month)).toBe('business');
+    expect(planByPriceId(PLANS.scale.paddlePriceId.month)).toBe('scale');
+  });
+
+  it('finds the plan key for a known yearly price id', () => {
+    expect(planByPriceId(PLANS.starter.paddlePriceId.year)).toBe('starter');
+    expect(planByPriceId(PLANS.business.paddlePriceId.year)).toBe('business');
+    expect(planByPriceId(PLANS.scale.paddlePriceId.year)).toBe('scale');
   });
 
   it('returns null for an unknown price id', () => {
-    expect(planByPriceId('price_doesnotexist')).toBeNull();
+    expect(planByPriceId('pri_doesnotexist')).toBeNull();
   });
 });
 
 describe('planLimitsResponse', () => {
-  it('returns the full limits shape for a known plan key, without leaking stripePriceId', () => {
+  it('returns the full limits shape for a known plan key, without leaking paddlePriceId', () => {
     const result = planLimitsResponse('business');
     expect(result).toEqual({
       tier: 'BUSINESS',
@@ -29,5 +35,9 @@ describe('planLimitsResponse', () => {
 
   it('defaults to Starter-level limits when planKey is null (still on trial)', () => {
     expect(planLimitsResponse(null).tier).toBe('STARTER');
+  });
+
+  it('reflects the corrected Starter price', () => {
+    expect(planLimitsResponse('starter').priceMonthlyUsd).toBe(29);
   });
 });
