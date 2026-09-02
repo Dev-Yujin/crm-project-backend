@@ -36,3 +36,22 @@ export function mapStripeStatus(stripeStatus) {
       return 'incomplete';
   }
 }
+
+// Maps a Paddle Subscription's `status` to this app's internal status. Same defensive
+// mapping as mapStripeStatus above and for the same reason — this app's trial is tracked
+// entirely in group_billing before any Paddle subscription exists, so Paddle's 'trialing'
+// should never actually occur here.
+export function mapPaddleStatus(paddleStatus) {
+  switch (paddleStatus) {
+    case 'active':
+    case 'trialing':
+      return 'active';
+    case 'past_due':
+      return 'past_due';
+    case 'canceled':
+    case 'paused':
+      return 'canceled';
+    default:
+      return 'incomplete';
+  }
+}

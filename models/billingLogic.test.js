@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeIsLocked, mapStripeStatus } from './billingLogic.js';
+import { computeIsLocked, mapStripeStatus, mapPaddleStatus } from './billingLogic.js';
 
 describe('computeIsLocked', () => {
   it('locks a past_due group regardless of trial dates', () => {
@@ -55,5 +55,25 @@ describe('mapStripeStatus', () => {
   it('maps incomplete and any unrecognized status to incomplete', () => {
     expect(mapStripeStatus('incomplete')).toBe('incomplete');
     expect(mapStripeStatus('something_stripe_adds_later')).toBe('incomplete');
+  });
+});
+
+describe('mapPaddleStatus', () => {
+  it('maps active and trialing to active', () => {
+    expect(mapPaddleStatus('active')).toBe('active');
+    expect(mapPaddleStatus('trialing')).toBe('active');
+  });
+
+  it('maps past_due to past_due', () => {
+    expect(mapPaddleStatus('past_due')).toBe('past_due');
+  });
+
+  it('maps canceled and paused to canceled', () => {
+    expect(mapPaddleStatus('canceled')).toBe('canceled');
+    expect(mapPaddleStatus('paused')).toBe('canceled');
+  });
+
+  it('maps any unrecognized status to incomplete', () => {
+    expect(mapPaddleStatus('something_paddle_adds_later')).toBe('incomplete');
   });
 });
