@@ -185,7 +185,15 @@ describe('requestMeetingRecordingUploadUrl', () => {
 });
 
 describe('confirmMeetingRecordingSegment', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    // vi.resetAllMocks() (rather than vi.clearAllMocks()), matching the
+    // requestMeetingRecordingUploadUrl and finishMeetingRecording blocks above: it drains
+    // any leftover queued mockResolvedValueOnce/mockReturnValueOnce value and restores each
+    // mock's original vi.fn(...) factory implementation from the vi.mock() blocks above, so
+    // a persistent override left by an earlier test (e.g. on getSessionWithSegments) can't
+    // leak into a later test's first call to the same mock, regardless of run order.
+    vi.resetAllMocks();
+  });
 
   it('records the segment with the server-verified size', async () => {
     const result = await meetingRecordingResolvers.Mutation.confirmMeetingRecordingSegment(
