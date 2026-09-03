@@ -1,7 +1,21 @@
 import { PassThrough } from 'stream';
 import { finished } from 'node:stream/promises';
+import { chmodSync } from 'fs';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from '@ffmpeg-installer/ffmpeg';
+
+// @ffmpeg-installer/ffmpeg normally chmods its bundled binary +x in its own
+// npm postinstall script. Many managed Node.js hosts (this app's included)
+// run installs with scripts disabled or otherwise don't preserve that bit
+// into the runtime filesystem, leaving the binary present but not
+// executable (spawn EACCES) even though the install itself succeeded. Set
+// it ourselves on every boot so this doesn't depend on the host's install
+// pipeline at all.
+try {
+  chmodSync(ffmpegPath.path, 0o755);
+} catch (err) {
+  console.error(`Could not chmod the ffmpeg binary at ${ffmpegPath.path}:`, err);
+}
 
 ffmpeg.setFfmpegPath(ffmpegPath.path);
 
