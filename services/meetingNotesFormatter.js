@@ -86,6 +86,10 @@ async function callHaiku(transcript) {
     throw new Error('Note content was malformed.');
   }
 
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('Note content was malformed.');
+  }
+
   return {
     title: (parsed.title ?? '').trim() || 'Meeting notes',
     summary: enforceTagAllowlist(parsed.summary ?? ''),

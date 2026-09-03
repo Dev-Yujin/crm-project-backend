@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../config/anthropic.js', () => ({
   anthropic: {
@@ -21,6 +21,10 @@ function mockStream(responseObject) {
 }
 
 describe('formatMeetingTranscript', () => {
+  beforeEach(() => {
+    anthropic.messages.stream.mockClear();
+  });
+
   it('parses title, summary, and cleanedTranscript from the model response', async () => {
     anthropic.messages.stream.mockReturnValueOnce(
       mockStream({
@@ -72,5 +76,17 @@ describe('formatMeetingTranscript', () => {
     });
 
     await expect(formatMeetingTranscript('transcript')).rejects.toThrow();
+  });
+
+  it('throws without retrying when the response is valid JSON but not an object', async () => {
+    anthropic.messages.stream.mockReturnValueOnce({
+      finalMessage: async () => ({
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: JSON.stringify(null) }],
+      }),
+    });
+
+    await expect(formatMeetingTranscript('transcript')).rejects.toThrow(/malformed/i);
+    expect(anthropic.messages.stream).toHaveBeenCalledTimes(1);
   });
 });
