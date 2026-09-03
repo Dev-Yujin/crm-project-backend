@@ -48,4 +48,18 @@ describe('loginMember rate limiting', () => {
       loginMember('rl-unrelated@example.com', 'wrong', `203.0.113.${Math.floor(Math.random() * 1000)}`),
     ).rejects.toThrow(/member not found/i);
   });
+
+  it('does not collapse everyone into one shared bucket when ip is undefined', async () => {
+    // req.ip can legitimately be undefined (e.g. aborted/destroyed connections). If the
+    // IP-keyed limiter were not skipped in that case, the key would interpolate to the
+    // literal string "loginMember-ip:undefined" and 20+ such calls would rate-limit every
+    // member across every group system-wide. Use a fresh email each call so the per-email
+    // limiter (max 5) never trips, and confirm none of the 25 calls throw a rate-limit
+    // error — they should all fail with the underlying "Member not found" instead.
+    for (let i = 0; i < 25; i++) {
+      await expect(
+        loginMember(`rl-undefined-ip-test-${i}-${Math.random()}@example.com`, 'wrong', undefined),
+      ).rejects.toThrow(/member not found/i);
+    }
+  });
 });

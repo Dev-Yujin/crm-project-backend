@@ -6,7 +6,14 @@ import { checkRateLimit } from '../utils/rateLimit.js';
 //Login function
 export const loginMember = async (email, password, ip) => {
     checkRateLimit(`loginMember:${email.toLowerCase()}`);
-    checkRateLimit(`loginMember-ip:${ip}`, { max: 20, windowMs: 15 * 60 * 1000 });
+    // Skip the IP-keyed check entirely when ip is falsy (e.g. req.ip can legitimately be
+    // undefined on aborted/destroyed connections). Without this guard, a missing IP would
+    // interpolate to the literal key "loginMember-ip:undefined", collapsing every member
+    // across every group into one shared bucket — 20 such requests system-wide would lock
+    // out login for everyone. The per-email check above remains the backstop either way.
+    if (ip) {
+        checkRateLimit(`loginMember-ip:${ip}`, { max: 20, windowMs: 15 * 60 * 1000 });
+    }
 
     try {
         const query = 'SELECT uuid, username, email, password, group_id, token_version, avatar_base64 FROM members WHERE email = $1';
