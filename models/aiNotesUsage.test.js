@@ -90,7 +90,7 @@ describe('addSecondsUsed', () => {
     expect(pool.query).toHaveBeenCalledTimes(2);
     const [updateSql, params] = pool.query.mock.calls[1];
     expect(updateSql).toContain('UPDATE group_ai_notes_usage');
-    expect(updateSql).toContain('seconds_used = seconds_used + $1');
+    expect(updateSql).toContain('GREATEST(0, seconds_used + $1)');
     expect(params).toEqual([300, 'group-1']);
   });
 });

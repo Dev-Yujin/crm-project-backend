@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   validateSegmentContentType,
   validateSegmentSize,
+  validateSegmentDuration,
   validateRecordingKey,
   checkAiNotesQuota,
 } from './meetingRecordings.js';
@@ -28,6 +29,19 @@ describe('validateSegmentSize', () => {
     expect(() => validateSegmentSize(-5)).toThrow();
     expect(() => validateSegmentSize(1.5)).toThrow();
     expect(() => validateSegmentSize(200 * 1024 * 1024)).toThrow();
+  });
+});
+
+describe('validateSegmentDuration', () => {
+  it('accepts a positive duration under the ceiling', () => {
+    expect(() => validateSegmentDuration(900)).not.toThrow();
+  });
+
+  it('rejects zero, negative, non-integer, or oversized', () => {
+    expect(() => validateSegmentDuration(0)).toThrow();
+    expect(() => validateSegmentDuration(-5)).toThrow();
+    expect(() => validateSegmentDuration(1.5)).toThrow();
+    expect(() => validateSegmentDuration(3601)).toThrow();
   });
 });
 

@@ -70,7 +70,7 @@ export async function addSecondsUsed(groupId, deltaSeconds) {
   await getOrCreateAiNotesUsage(groupId);
   await pool.query(
     `UPDATE group_ai_notes_usage
-     SET seconds_used = seconds_used + $1, updated_at = now()
+     SET seconds_used = GREATEST(0, seconds_used + $1), updated_at = now()
      WHERE group_id = $2`,
     [deltaSeconds, groupId],
   );

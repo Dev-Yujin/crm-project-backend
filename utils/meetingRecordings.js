@@ -19,6 +19,23 @@ export function validateSegmentSize(sizeBytes) {
   }
 }
 
+// Generous relative to the ~15-minute (900s) segment cap by design — this is a sanity
+// ceiling against a bogus/negative client-declared value, not a tight limit. Note this
+// stored value is no longer the metering source of truth (see finishMeetingRecording,
+// which meters off Fish's own server-observed durationSeconds per segment) — this just
+// keeps the DB row honest for observability/debugging and defends against a corrupt
+// client value being persisted at all.
+const MAX_SEGMENT_DURATION_SECONDS = 3600;
+
+export function validateSegmentDuration(durationSeconds) {
+  if (!Number.isInteger(durationSeconds) || durationSeconds <= 0) {
+    throw new Error('Segment duration must be a positive integer number of seconds.');
+  }
+  if (durationSeconds > MAX_SEGMENT_DURATION_SECONDS) {
+    throw new Error(`Segment duration is too long (${durationSeconds}s, max ${MAX_SEGMENT_DURATION_SECONDS}s).`);
+  }
+}
+
 // Enforces the R2 key namespace requestMeetingRecordingUploadUrl builds
 // (`meeting-recordings/${groupId}/${sessionId}/...`) — same cross-tenant-spoofing
 // protection as validateAttachmentKey in utils/attachments.js.
