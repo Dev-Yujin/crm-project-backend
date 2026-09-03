@@ -1,6 +1,6 @@
 import { anthropic } from '../config/anthropic.js';
 
-const MODEL = 'claude-haiku-4-5-20251001';
+const MODEL = 'claude-sonnet-5';
 
 const ALLOWED_TAGS = new Set(['h2', 'h3', 'p', 'ul', 'ol', 'li', 'b', 'i', 'u', 'br']);
 
@@ -54,7 +54,7 @@ function enforceTagAllowlist(html) {
   });
 }
 
-async function callHaiku(transcript) {
+async function callModel(transcript) {
   const stream = anthropic.messages.stream({
     model: MODEL,
     max_tokens: 8000,
@@ -104,7 +104,7 @@ export async function formatMeetingTranscript(transcript, attempts = 3) {
 
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
-      return await callHaiku(transcript);
+      return await callModel(transcript);
     } catch (err) {
       lastError = err instanceof Error ? err : new Error('Could not format the transcript.');
       if (/could not be processed|was malformed|No note content/i.test(lastError.message)) break;

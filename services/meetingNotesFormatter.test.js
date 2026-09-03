@@ -40,7 +40,7 @@ describe('formatMeetingTranscript', () => {
     expect(result.summary).toContain('launch timing');
     expect(result.cleanedTranscript).toContain('<h2>Launch timing</h2>');
     const [callArgs] = anthropic.messages.stream.mock.calls[0];
-    expect(callArgs.model).toBe('claude-haiku-4-5-20251001');
+    expect(callArgs.model).toBe('claude-sonnet-5');
   });
 
   it('strips disallowed HTML tags from the output', async () => {
