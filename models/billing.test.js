@@ -12,7 +12,7 @@ vi.mock('../config/plans.js', async () => {
 });
 
 const { pool } = await import('../config/supabase.js');
-const { upsertBillingFromSubscription } = await import('./billing.js');
+const { upsertBillingFromSubscription, getOrCreateBilling } = await import('./billing.js');
 
 describe('upsertBillingFromSubscription', () => {
   beforeEach(() => {
@@ -83,5 +83,30 @@ describe('upsertBillingFromSubscription', () => {
     await upsertBillingFromSubscription(subscription);
 
     expect(pool.query).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('getOrCreateBilling', () => {
+  beforeEach(() => {
+    pool.query.mockReset();
+  });
+
+  it('returns trial-tier limits for a group whose billing row already exists and is trialing', async () => {
+    pool.query.mockResolvedValueOnce({
+      rows: [
+        {
+          group_id: 'g1',
+          status: 'trialing',
+          plan: null,
+          trial_ends_at: new Date(Date.now() + 10 * 86_400_000),
+          current_period_end: null,
+        },
+      ],
+    });
+
+    const result = await getOrCreateBilling('g1');
+
+    expect(result.limits.storageGb).toBe(3);
+    expect(result.limits.aiNotesHoursPerMonth).toBe(0);
   });
 });

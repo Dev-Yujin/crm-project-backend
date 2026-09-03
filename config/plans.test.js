@@ -40,4 +40,20 @@ describe('planLimitsResponse', () => {
   it('reflects the corrected Starter price', () => {
     expect(planLimitsResponse('starter').priceMonthlyUsd).toBe(29);
   });
+
+  it('returns trial-tier limits (3GB storage, 0 AI-notes hours) when status is trialing', () => {
+    const result = planLimitsResponse(null, 'trialing');
+    expect(result.storageGb).toBe(3);
+    expect(result.aiNotesHoursPerMonth).toBe(0);
+    // Everything else still reads as Starter-shaped.
+    expect(result.tier).toBe('STARTER');
+    expect(result.adminLimit).toBe(1);
+    expect(result.memberLimit).toBe(10);
+  });
+
+  it('does not apply trial limits when status is omitted or not trialing', () => {
+    expect(planLimitsResponse(null).storageGb).toBe(10);
+    expect(planLimitsResponse(null).aiNotesHoursPerMonth).toBe(5);
+    expect(planLimitsResponse(null, 'active').storageGb).toBe(10);
+  });
 });

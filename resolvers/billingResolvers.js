@@ -15,7 +15,7 @@ const billingResolvers = {
       ]);
       return { ...billing, storageBytesUsed };
     },
-    plans: () => Object.keys(PLANS).map(planLimitsResponse),
+    plans: () => Object.keys(PLANS).map((planKey) => planLimitsResponse(planKey)),
   },
   Mutation: {
     createBillingPortalSession: async (_, __, context) => {

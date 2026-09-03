@@ -9,7 +9,7 @@ function mapRow(row) {
     groupId: row.group_id,
     status: row.status,
     plan: row.plan ? row.plan.toUpperCase() : null,
-    limits: planLimitsResponse(row.plan),
+    limits: planLimitsResponse(row.plan, row.status),
     trialEndsAt: row.trial_ends_at ? row.trial_ends_at.toISOString() : null,
     currentPeriodEnd: row.current_period_end ? row.current_period_end.toISOString() : null,
     isLocked: computeIsLocked(row.status, row.trial_ends_at),

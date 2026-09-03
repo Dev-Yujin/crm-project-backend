@@ -40,6 +40,12 @@ export const PLANS = {
   },
 };
 
+// Trial groups get these two limits instead of falling back to Starter's real
+// values — AI Meeting Notes is fully blocked (not a reduced quota), and storage
+// is capped well below Starter's paid tier. Everything else about a trial
+// group (seat counts, tier/name shape) still reads as Starter-shaped.
+export const TRIAL_LIMITS = { storageGb: 3, aiNotesHoursPerMonth: 0 };
+
 // Reverse lookup used by the Paddle webhook, which only knows a subscription's current
 // price ID — checks both billing cycles since a customer could be on either one.
 export function planByPriceId(priceId) {
@@ -57,15 +63,16 @@ export function planByPriceId(priceId) {
 // is an internal implementation detail with no place in a client-facing response.
 // planKey may be null (a group still on trial has no plan chosen yet) — defaults to
 // Starter-level limits, matching the trial's actual limits.
-export function planLimitsResponse(planKey) {
+export function planLimitsResponse(planKey, status) {
   const config = PLANS[planKey ?? 'starter'];
+  const isTrialing = status === 'trialing';
   return {
     tier: config.tier,
     name: config.name,
     priceMonthlyUsd: config.priceMonthlyUsd,
     adminLimit: config.adminLimit,
     memberLimit: config.memberLimit,
-    storageGb: config.storageGb,
-    aiNotesHoursPerMonth: config.aiNotesHoursPerMonth,
+    storageGb: isTrialing ? TRIAL_LIMITS.storageGb : config.storageGb,
+    aiNotesHoursPerMonth: isTrialing ? TRIAL_LIMITS.aiNotesHoursPerMonth : config.aiNotesHoursPerMonth,
   };
 }
