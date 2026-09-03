@@ -30,6 +30,7 @@ import billingResolvers from './resolvers/billingResolvers.js';
 import meetingRecordingTypeDefs from './typedefs/meetingRecordingTypeDefs.js';
 import meetingRecordingResolvers from './resolvers/meetingRecordingResolvers.js';
 import billingLockPlugin from './utils/billingLockPlugin.js';
+import rateLimiter from './config/rateLimiter.js';
 import { paddleWebhookHandler } from './routes/paddleWebhook.js';
 import { fetchCurrentUser } from './models/userFunctions.js';
 import { fetchUserGroupId } from './utils/groups.js';
@@ -164,6 +165,7 @@ async function main() {
   app.post('/webhooks/paddle', express.raw({ type: 'application/json' }), paddleWebhookHandler);
 
   app.use(
+    rateLimiter,
     express.json({ limit: '400kb' }),
     expressMiddleware(server, {
       context: async ({ req, res }) => ({ ...(await resolveContext(req, res)), res, req }),
