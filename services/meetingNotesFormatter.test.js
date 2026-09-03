@@ -89,4 +89,16 @@ describe('formatMeetingTranscript', () => {
     await expect(formatMeetingTranscript('transcript')).rejects.toThrow(/malformed/i);
     expect(anthropic.messages.stream).toHaveBeenCalledTimes(1);
   });
+
+  it('throws without retrying when the response is valid JSON but an array', async () => {
+    anthropic.messages.stream.mockReturnValueOnce({
+      finalMessage: async () => ({
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: JSON.stringify(['a', 'b']) }],
+      }),
+    });
+
+    await expect(formatMeetingTranscript('transcript')).rejects.toThrow(/malformed/i);
+    expect(anthropic.messages.stream).toHaveBeenCalledTimes(1);
+  });
 });

@@ -86,7 +86,7 @@ async function callHaiku(transcript) {
     throw new Error('Note content was malformed.');
   }
 
-  if (!parsed || typeof parsed !== 'object') {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('Note content was malformed.');
   }
 
