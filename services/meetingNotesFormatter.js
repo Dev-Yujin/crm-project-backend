@@ -63,7 +63,6 @@ async function callHaiku(transcript) {
       { role: 'user', content: `Here is the meeting transcript.\n\n<transcript>\n${transcript}\n</transcript>` },
     ],
     output_config: {
-      effort: 'medium',
       format: { type: 'json_schema', schema: OUTPUT_SCHEMA },
     },
   });
