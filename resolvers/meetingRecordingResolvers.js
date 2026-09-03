@@ -127,7 +127,16 @@ const meetingRecordingResolvers = {
       }
 
       const fullTranscript = transcriptParts.join('\n\n');
-      const note = await formatMeetingTranscript(fullTranscript);
+      let note;
+      try {
+        note = await formatMeetingTranscript(fullTranscript);
+      } catch (err) {
+        await markSessionStatus(sessionId, 'failed', null);
+        throw new GraphQLError(
+          'Could not organize the notes into a summary. Your recording is saved — try again.',
+          { extensions: { code: 'NOTE_FORMATTING_FAILED' } }
+        );
+      }
 
       await markSessionStatus(sessionId, 'completed', totalDurationSeconds);
       await addSecondsUsed(groupId, totalDurationSeconds);

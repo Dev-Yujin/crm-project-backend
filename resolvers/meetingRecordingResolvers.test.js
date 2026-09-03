@@ -183,4 +183,19 @@ describe('finishMeetingRecording', () => {
     ).rejects.toThrow();
     expect(markSessionStatus).toHaveBeenCalledWith('s1', 'failed', null);
   });
+
+  it('marks the session failed when formatMeetingTranscript throws', async () => {
+    getSessionWithSegments.mockResolvedValueOnce({
+      session: { sessionId: 's1', groupId: 'g1', status: 'recording' },
+      segments: [{ segmentIndex: 0, r2Key: 'k0', sizeBytes: 100, durationSeconds: 900 }],
+    });
+    formatMeetingTranscript.mockRejectedValueOnce(new Error('Anthropic API error: retries exhausted'));
+
+    await expect(
+      meetingRecordingResolvers.Mutation.finishMeetingRecording(null, { sessionId: 's1' }, context),
+    ).rejects.toThrow(/could not organize/i);
+    expect(markSessionStatus).toHaveBeenCalledWith('s1', 'processing', null);
+    expect(markSessionStatus).toHaveBeenCalledWith('s1', 'failed', null);
+    expect(markSessionStatus).not.toHaveBeenCalledWith('s1', 'completed', expect.anything());
+  });
 });
