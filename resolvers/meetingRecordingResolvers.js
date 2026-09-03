@@ -18,6 +18,7 @@ import {
 } from '../utils/meetingRecordings.js';
 import { transcribeSegment } from '../services/fishTranscription.js';
 import { formatMeetingTranscript } from '../services/meetingNotesFormatter.js';
+import { checkRateLimit } from '../utils/rateLimit.js';
 
 function requireNotTrialing(billing) {
   if (billing.status === 'trialing') {
@@ -46,6 +47,12 @@ const meetingRecordingResolvers = {
     requestMeetingRecordingUploadUrl: async (_, { sessionId, segmentIndex, contentType, sizeBytes }, context) => {
       const groupId = requireGroup(context);
       const uploadedBy = `admin:${context.user.id}`;
+
+      checkRateLimit(`ai-notes-upload:${groupId}`, {
+        max: 10,
+        windowMs: 60 * 1000,
+        message: 'Too many recording requests. Slow down and try again shortly.',
+      });
 
       validateSegmentContentType(contentType);
       validateSegmentSize(sizeBytes);
@@ -129,6 +136,12 @@ const meetingRecordingResolvers = {
 
     finishMeetingRecording: async (_, { sessionId }, context) => {
       const groupId = requireGroup(context);
+
+      checkRateLimit(`ai-notes-finish:${groupId}`, {
+        max: 5,
+        windowMs: 60 * 1000,
+        message: 'Too many recording requests. Slow down and try again shortly.',
+      });
 
       const billing = await getOrCreateBilling(groupId);
       requireNotTrialing(billing);
