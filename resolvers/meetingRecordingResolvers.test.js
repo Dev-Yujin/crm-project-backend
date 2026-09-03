@@ -10,7 +10,7 @@ vi.mock('../models/aiNotesUsage.js', () => ({
   addSecondsUsed: vi.fn(async () => {}),
 }));
 vi.mock('../models/meetingRecording.js', () => ({
-  getOrCreateSession: vi.fn(async (sessionId, groupId, createdBy) => ({ sessionId, groupId, createdBy, status: 'recording' })),
+  getOrCreateSession: vi.fn(async (sessionId, groupId, createdBy) => ({ sessionId, groupId, createdBy, status: 'recording', created: true })),
   insertSegment: vi.fn(async () => {}),
   getSessionWithSegments: vi.fn(async () => ({
     session: { sessionId: 's1', groupId: 'g1', status: 'recording' },
@@ -69,8 +69,8 @@ describe('requestMeetingRecordingUploadUrl', () => {
     ).rejects.toThrow(/quota|hrs/i);
   });
 
-  it('does not check quota for segment 1+ of an existing session', async () => {
-    getOrCreateSession.mockResolvedValueOnce({ sessionId: 's1', groupId: 'g1', createdBy: 'admin:u1', status: 'recording' });
+  it('does not check quota for a continuing session (created: false), regardless of segmentIndex', async () => {
+    getOrCreateSession.mockResolvedValueOnce({ sessionId: 's1', groupId: 'g1', createdBy: 'admin:u1', status: 'recording', created: false });
     getOrCreateAiNotesUsage.mockResolvedValueOnce({ secondsUsed: 100 * 3600, periodStart: new Date(), periodEnd: new Date() });
 
     await expect(
@@ -80,6 +80,33 @@ describe('requestMeetingRecordingUploadUrl', () => {
         context,
       ),
     ).resolves.toBeDefined();
+  });
+
+  it('checks quota even when a client requests upload URLs starting at a non-zero segmentIndex, as long as the session was actually just created', async () => {
+    // Regression test for the segmentIndex-spoofing bypass: quota gating must be driven
+    // by getOrCreateSession's real `created` flag, not by the client-controlled segmentIndex.
+    getOrCreateSession.mockResolvedValueOnce({ sessionId: 's9', groupId: 'g1', createdBy: 'admin:u1', status: 'recording', created: true });
+    getOrCreateAiNotesUsage.mockResolvedValueOnce({ secondsUsed: 5 * 3600, periodStart: new Date(), periodEnd: new Date() });
+
+    await expect(
+      meetingRecordingResolvers.Mutation.requestMeetingRecordingUploadUrl(
+        null,
+        { sessionId: 's9', segmentIndex: 1, contentType: 'audio/webm', sizeBytes: 1024 },
+        context,
+      ),
+    ).rejects.toThrow(/quota|hrs/i);
+  });
+
+  it('rejects when the resolved session belongs to a different group (cross-tenant reference)', async () => {
+    getOrCreateSession.mockResolvedValueOnce({ sessionId: 's1', groupId: 'other-group', createdBy: 'admin:other', status: 'recording', created: false });
+
+    await expect(
+      meetingRecordingResolvers.Mutation.requestMeetingRecordingUploadUrl(
+        null,
+        { sessionId: 's1', segmentIndex: 1, contentType: 'audio/webm', sizeBytes: 1024 },
+        context,
+      ),
+    ).rejects.toThrow(/invalid recording session/i);
   });
 });
 
@@ -105,6 +132,30 @@ describe('confirmMeetingRecordingSegment', () => {
         context,
       ),
     ).rejects.toThrow();
+  });
+
+  it('rejects a negative or bogus durationSeconds', async () => {
+    await expect(
+      meetingRecordingResolvers.Mutation.confirmMeetingRecordingSegment(
+        null,
+        { sessionId: 's1', segmentIndex: 0, key: 'meeting-recordings/g1/s1/segment-0.webm', sizeBytes: 1024, durationSeconds: -900 },
+        context,
+      ),
+    ).rejects.toThrow();
+    expect(insertSegment).not.toHaveBeenCalled();
+  });
+
+  it('rejects when the session being confirmed against belongs to a different group (cross-tenant write)', async () => {
+    getOrCreateSession.mockResolvedValueOnce({ sessionId: 's1', groupId: 'other-group', createdBy: 'admin:other', status: 'recording', created: false });
+
+    await expect(
+      meetingRecordingResolvers.Mutation.confirmMeetingRecordingSegment(
+        null,
+        { sessionId: 's1', segmentIndex: 0, key: 'meeting-recordings/g1/s1/segment-0.webm', sizeBytes: 1024, durationSeconds: 900 },
+        context,
+      ),
+    ).rejects.toThrow(/invalid recording session/i);
+    expect(insertSegment).not.toHaveBeenCalled();
   });
 });
 
@@ -197,5 +248,92 @@ describe('finishMeetingRecording', () => {
     expect(markSessionStatus).toHaveBeenCalledWith('s1', 'processing', null);
     expect(markSessionStatus).toHaveBeenCalledWith('s1', 'failed', null);
     expect(markSessionStatus).not.toHaveBeenCalledWith('s1', 'completed', expect.anything());
+  });
+
+  it('meters usage off the server-observed duration from transcribeSegment, not the client-declared segment.durationSeconds', async () => {
+    // The stored segment claims a wildly different duration than Fish's own ASR
+    // response — metering must follow the server-observed value, making a lying
+    // client's declared duration unreachable as a metering input.
+    getSessionWithSegments.mockResolvedValueOnce({
+      session: { sessionId: 's1', groupId: 'g1', status: 'recording' },
+      segments: [{ segmentIndex: 0, r2Key: 'k0', sizeBytes: 100, durationSeconds: 999999 }],
+    });
+    transcribeSegment.mockResolvedValueOnce({ text: 'hello world', durationSeconds: 42 });
+
+    const result = await meetingRecordingResolvers.Mutation.finishMeetingRecording(
+      null,
+      { sessionId: 's1' },
+      context,
+    );
+
+    expect(result.durationSeconds).toBe(42);
+    expect(addSecondsUsed).toHaveBeenCalledWith('g1', 42);
+    expect(markSessionStatus).toHaveBeenCalledWith('s1', 'completed', 42);
+  });
+
+  it('filters empty/whitespace-only transcript segments before formatting', async () => {
+    getSessionWithSegments.mockResolvedValueOnce({
+      session: { sessionId: 's1', groupId: 'g1', status: 'recording' },
+      segments: [
+        { segmentIndex: 0, r2Key: 'k0', sizeBytes: 100, durationSeconds: 900 },
+        { segmentIndex: 1, r2Key: 'k1', sizeBytes: 100, durationSeconds: 900 },
+      ],
+    });
+    transcribeSegment
+      .mockResolvedValueOnce({ text: '   ', durationSeconds: 900 })
+      .mockResolvedValueOnce({ text: 'real content', durationSeconds: 900 });
+
+    const result = await meetingRecordingResolvers.Mutation.finishMeetingRecording(
+      null,
+      { sessionId: 's1' },
+      context,
+    );
+
+    expect(result.warnings).toEqual([]);
+    expect(formatMeetingTranscript).toHaveBeenCalledWith('real content');
+  });
+
+  it('treats an all-silent recording (every segment empty) the same as total transcription failure', async () => {
+    getSessionWithSegments.mockResolvedValueOnce({
+      session: { sessionId: 's1', groupId: 'g1', status: 'recording' },
+      segments: [{ segmentIndex: 0, r2Key: 'k0', sizeBytes: 100, durationSeconds: 900 }],
+    });
+    transcribeSegment.mockResolvedValueOnce({ text: '', durationSeconds: 900 });
+
+    await expect(
+      meetingRecordingResolvers.Mutation.finishMeetingRecording(null, { sessionId: 's1' }, context),
+    ).rejects.toThrow(/transcribed/i);
+    expect(markSessionStatus).toHaveBeenCalledWith('s1', 'failed', null);
+    expect(formatMeetingTranscript).not.toHaveBeenCalled();
+  });
+
+  it('marks the session failed (not completed) when addSecondsUsed throws, so it stays retryable and is not silently completed unbilled', async () => {
+    getSessionWithSegments.mockResolvedValueOnce({
+      session: { sessionId: 's1', groupId: 'g1', status: 'recording' },
+      segments: [{ segmentIndex: 0, r2Key: 'k0', sizeBytes: 100, durationSeconds: 900 }],
+    });
+    addSecondsUsed.mockRejectedValueOnce(new Error('db unavailable'));
+
+    await expect(
+      meetingRecordingResolvers.Mutation.finishMeetingRecording(null, { sessionId: 's1' }, context),
+    ).rejects.toThrow();
+    expect(markSessionStatus).toHaveBeenCalledWith('s1', 'failed', null);
+    expect(markSessionStatus).not.toHaveBeenCalledWith('s1', 'completed', expect.anything());
+  });
+
+  it('marks the session failed when markSessionStatus("completed", ...) itself throws', async () => {
+    getSessionWithSegments.mockResolvedValueOnce({
+      session: { sessionId: 's1', groupId: 'g1', status: 'recording' },
+      segments: [{ segmentIndex: 0, r2Key: 'k0', sizeBytes: 100, durationSeconds: 900 }],
+    });
+    markSessionStatus
+      .mockResolvedValueOnce(undefined) // 'processing'
+      .mockRejectedValueOnce(new Error('db unavailable')) // 'completed' throws
+      .mockResolvedValueOnce(undefined); // 'failed', from the catch
+
+    await expect(
+      meetingRecordingResolvers.Mutation.finishMeetingRecording(null, { sessionId: 's1' }, context),
+    ).rejects.toThrow();
+    expect(markSessionStatus).toHaveBeenCalledWith('s1', 'failed', null);
   });
 });
