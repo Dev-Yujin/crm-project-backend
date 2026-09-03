@@ -19,6 +19,14 @@ import {
 import { transcribeSegment } from '../services/fishTranscription.js';
 import { formatMeetingTranscript } from '../services/meetingNotesFormatter.js';
 
+function requireNotTrialing(billing) {
+  if (billing.status === 'trialing') {
+    throw new GraphQLError('AI Meeting Notes requires a paid plan.', {
+      extensions: { code: 'TRIAL_FEATURE_LOCKED' },
+    });
+  }
+}
+
 const meetingRecordingResolvers = {
   Query: {
     myAiNotesUsage: async (_, __, context) => {
@@ -42,6 +50,9 @@ const meetingRecordingResolvers = {
       validateSegmentContentType(contentType);
       validateSegmentSize(sizeBytes);
 
+      const billing = await getOrCreateBilling(groupId);
+      requireNotTrialing(billing);
+
       const session = await getOrCreateSession(sessionId, groupId, uploadedBy);
 
       // Defense against cross-tenant reference: getOrCreateSession looks up by
@@ -57,10 +68,7 @@ const meetingRecordingResolvers = {
       const isNewSession = session.created;
 
       if (isNewSession) {
-        const [usage, billing] = await Promise.all([
-          getOrCreateAiNotesUsage(groupId),
-          getOrCreateBilling(groupId),
-        ]);
+        const usage = await getOrCreateAiNotesUsage(groupId);
         try {
           checkAiNotesQuota(usage.secondsUsed, true, billing.limits.aiNotesHoursPerMonth);
         } catch (err) {
@@ -121,6 +129,9 @@ const meetingRecordingResolvers = {
 
     finishMeetingRecording: async (_, { sessionId }, context) => {
       const groupId = requireGroup(context);
+
+      const billing = await getOrCreateBilling(groupId);
+      requireNotTrialing(billing);
 
       const { session, segments } = await getSessionWithSegments(sessionId, groupId);
 

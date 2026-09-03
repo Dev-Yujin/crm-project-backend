@@ -33,6 +33,7 @@ vi.mock('../models/billing.js', () => ({
 }));
 
 const { createUploadUrl } = await import('../config/r2.js');
+const { getOrCreateBilling } = await import('../models/billing.js');
 const { getOrCreateAiNotesUsage, addSecondsUsed } = await import('../models/aiNotesUsage.js');
 const { getOrCreateSession, insertSegment, getSessionWithSegments, markSessionStatus } = await import('../models/meetingRecording.js');
 const { transcribeSegment } = await import('../services/fishTranscription.js');
@@ -107,6 +108,31 @@ describe('requestMeetingRecordingUploadUrl', () => {
         context,
       ),
     ).rejects.toThrow(/invalid recording session/i);
+  });
+
+  it('rejects a trialing group even for a continuing session (created: false)', async () => {
+    getOrCreateBilling.mockResolvedValueOnce({ status: 'trialing', limits: { aiNotesHoursPerMonth: 0 } });
+
+    await expect(
+      meetingRecordingResolvers.Mutation.requestMeetingRecordingUploadUrl(
+        null,
+        { sessionId: 's1', segmentIndex: 1, contentType: 'audio/webm', sizeBytes: 1024 },
+        context,
+      ),
+    ).rejects.toThrow(/paid plan/i);
+  });
+
+  it('rejects a trialing group before ever fetching quota usage', async () => {
+    getOrCreateBilling.mockResolvedValueOnce({ status: 'trialing', limits: { aiNotesHoursPerMonth: 0 } });
+
+    await expect(
+      meetingRecordingResolvers.Mutation.requestMeetingRecordingUploadUrl(
+        null,
+        { sessionId: 's1', segmentIndex: 0, contentType: 'audio/webm', sizeBytes: 1024 },
+        context,
+      ),
+    ).rejects.toThrow(/paid plan/i);
+    expect(getOrCreateAiNotesUsage).not.toHaveBeenCalled();
   });
 });
 
@@ -335,5 +361,14 @@ describe('finishMeetingRecording', () => {
       meetingRecordingResolvers.Mutation.finishMeetingRecording(null, { sessionId: 's1' }, context),
     ).rejects.toThrow();
     expect(markSessionStatus).toHaveBeenCalledWith('s1', 'failed', null);
+  });
+
+  it('rejects a trialing group before touching the session', async () => {
+    getOrCreateBilling.mockResolvedValueOnce({ status: 'trialing', limits: { aiNotesHoursPerMonth: 0 } });
+
+    await expect(
+      meetingRecordingResolvers.Mutation.finishMeetingRecording(null, { sessionId: 's1' }, context),
+    ).rejects.toThrow(/paid plan/i);
+    expect(getSessionWithSegments).not.toHaveBeenCalled();
   });
 });
