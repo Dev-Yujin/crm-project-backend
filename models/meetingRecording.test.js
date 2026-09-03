@@ -23,6 +23,7 @@ describe('getOrCreateSession', () => {
     const result = await getOrCreateSession('s1', 'g1', 'admin:u1');
 
     expect(result.status).toBe('recording');
+    expect(result.created).toBe(false);
     expect(pool.query).toHaveBeenCalledTimes(1);
   });
 
@@ -36,8 +37,23 @@ describe('getOrCreateSession', () => {
     const result = await getOrCreateSession('s2', 'g1', 'admin:u1');
 
     expect(result.status).toBe('recording');
+    expect(result.created).toBe(true);
     expect(pool.query).toHaveBeenCalledTimes(2);
     expect(pool.query.mock.calls[1][0]).toContain('INSERT INTO meeting_recording_sessions');
+  });
+
+  it('marks created:false when the insert loses the race to a concurrent request', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [] }) // SELECT finds nothing
+      .mockResolvedValueOnce({ rows: [] }) // INSERT ... ON CONFLICT DO NOTHING returns nothing
+      .mockResolvedValueOnce({
+        rows: [{ session_id: 's3', group_id: 'g1', created_by: 'admin:u2', status: 'recording' }],
+      }); // fallback SELECT
+
+    const result = await getOrCreateSession('s3', 'g1', 'admin:u1');
+
+    expect(result.created).toBe(false);
+    expect(pool.query).toHaveBeenCalledTimes(3);
   });
 });
 
@@ -52,7 +68,20 @@ describe('insertSegment', () => {
     expect(pool.query).toHaveBeenCalledTimes(1);
     const [sql, params] = pool.query.mock.calls[0];
     expect(sql).toContain('INSERT INTO meeting_recording_segments');
+    expect(sql).toContain('ON CONFLICT (session_id, segment_index) DO UPDATE');
     expect(params).toEqual(['s1', 0, 'g1', 'meeting-recordings/g1/s1/segment-0.webm', 512000, 900]);
+  });
+
+  it('updates the row instead of throwing when re-confirming the same (sessionId, segmentIndex)', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [] });
+
+    await expect(
+      insertSegment('s1', 'g1', 0, 'meeting-recordings/g1/s1/segment-0.webm', 999, 800),
+    ).resolves.not.toThrow();
+
+    const [sql, params] = pool.query.mock.calls[0];
+    expect(sql).toContain('DO UPDATE');
+    expect(params).toEqual(['s1', 0, 'g1', 'meeting-recordings/g1/s1/segment-0.webm', 999, 800]);
   });
 });
 
@@ -78,7 +107,8 @@ describe('getSessionWithSegments', () => {
     expect(result.segments[0].r2Key).toBe('k0');
     const [segSql, segParams] = pool.query.mock.calls[1];
     expect(segSql).toContain('ORDER BY segment_index');
-    expect(segParams).toEqual(['s1']);
+    expect(segSql).toContain('group_id = $2');
+    expect(segParams).toEqual(['s1', 'g1']);
   });
 
   it('throws when the session belongs to a different group', async () => {
