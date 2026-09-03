@@ -93,4 +93,18 @@ describe('addSecondsUsed', () => {
     expect(updateSql).toContain('GREATEST(0, seconds_used + $1)');
     expect(params).toEqual([300, 'group-1']);
   });
+
+  it('rounds a fractional delta before writing, since seconds_used is an INTEGER column', async () => {
+    const periodEnd = new Date(Date.now() + 86_400_000);
+    pool.query
+      .mockResolvedValueOnce({
+        rows: [{ seconds_used: 100, period_start: new Date(), period_end: periodEnd }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await addSecondsUsed('group-1', 9.36);
+
+    const [, params] = pool.query.mock.calls[1];
+    expect(params).toEqual([9, 'group-1']);
+  });
 });

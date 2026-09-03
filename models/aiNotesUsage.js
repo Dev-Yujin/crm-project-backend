@@ -72,6 +72,9 @@ export async function addSecondsUsed(groupId, deltaSeconds) {
     `UPDATE group_ai_notes_usage
      SET seconds_used = GREATEST(0, seconds_used + $1), updated_at = now()
      WHERE group_id = $2`,
-    [deltaSeconds, groupId],
+    // seconds_used is an INTEGER column — round defensively here too, not just at
+    // the call site, since a fractional value (e.g. an ASR provider's raw duration)
+    // would otherwise throw a Postgres type error instead of degrading gracefully.
+    [Math.round(deltaSeconds), groupId],
   );
 }

@@ -157,7 +157,10 @@ const meetingRecordingResolvers = {
             if (result.text?.trim()) {
               transcriptParts.push(result.text);
             }
-            totalDurationSeconds += result.durationSeconds;
+            // Fish reports duration as a float (e.g. 9.36s); seconds_used is an
+            // INTEGER column, so round per segment rather than truncating precision
+            // in one lump sum at the end.
+            totalDurationSeconds += Math.round(result.durationSeconds);
           } catch (err) {
             console.error(`Meeting recording segment ${segment.segmentIndex} transcription failed:`, err);
             warnings.push(`Segment ${segment.segmentIndex + 1} could not be transcribed.`);
