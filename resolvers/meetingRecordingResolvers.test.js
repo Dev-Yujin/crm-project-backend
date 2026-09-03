@@ -235,7 +235,13 @@ describe('confirmMeetingRecordingSegment', () => {
 
 describe('finishMeetingRecording', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    // vi.resetAllMocks() (rather than vi.clearAllMocks()) so that a `mockResolvedValue`
+    // set by one test (e.g. the "rejects the 6th finish request for one group within a
+    // minute" test below) can't leak into a later test's calls to the same mock.
+    // resetAllMocks drains any such leftover queued/persistent value and restores each
+    // mock's original vi.fn(...) factory implementation from the vi.mock() blocks above,
+    // so behavior is unchanged for every test that doesn't itself override a mock.
+    vi.resetAllMocks();
     // finishMeetingRecording fetches each segment's bytes from its R2 download URL —
     // mock that HTTP call so tests never make a real network request.
     global.fetch = vi.fn(async () => ({
