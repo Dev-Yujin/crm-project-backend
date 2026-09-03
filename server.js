@@ -27,6 +27,8 @@ import emailCredentialsTypeDefs from './typedefs/emailCredentialsTypeDefs.js';
 import emailCredentialsResolvers from './resolvers/emailCredentialsResolvers.js';
 import billingTypeDefs from './typedefs/billingTypeDefs.js';
 import billingResolvers from './resolvers/billingResolvers.js';
+import meetingRecordingTypeDefs from './typedefs/meetingRecordingTypeDefs.js';
+import meetingRecordingResolvers from './resolvers/meetingRecordingResolvers.js';
 import billingLockPlugin from './utils/billingLockPlugin.js';
 import { paddleWebhookHandler } from './routes/paddleWebhook.js';
 import { fetchCurrentUser } from './models/userFunctions.js';
@@ -40,8 +42,8 @@ const app = express();
 const httpServer = http.createServer(app);
 
 const server = new ApolloServer({
-  typeDefs: [userTypeDefs, memberTypeDefs, clientTypeDefs, taskTypeDefs, departmentTypeDefs, serviceTypeDefs, recurringTaskTypeDefs, taskStatusTypeDefs, groupTypeDefs, emailCredentialsTypeDefs, billingTypeDefs],
-  resolvers: [userResolvers, memberResolvers, clientResolvers, taskResolvers, departmentResolvers, serviceResolvers, recurringTaskResolvers, taskStatusResolvers, groupResolvers, emailCredentialsResolvers, billingResolvers],
+  typeDefs: [userTypeDefs, memberTypeDefs, clientTypeDefs, taskTypeDefs, departmentTypeDefs, serviceTypeDefs, recurringTaskTypeDefs, taskStatusTypeDefs, groupTypeDefs, emailCredentialsTypeDefs, billingTypeDefs, meetingRecordingTypeDefs],
+  resolvers: [userResolvers, memberResolvers, clientResolvers, taskResolvers, departmentResolvers, serviceResolvers, recurringTaskResolvers, taskStatusResolvers, groupResolvers, emailCredentialsResolvers, billingResolvers, meetingRecordingResolvers],
   plugins: [ApolloServerPluginDrainHttpServer({ httpServer }), billingLockPlugin],
 });
 
