@@ -54,6 +54,22 @@ describe('getOrCreateAiNotesUsage', () => {
     const [insertSql] = pool.query.mock.calls[1];
     expect(insertSql).toContain('INSERT INTO group_ai_notes_usage');
   });
+
+  it('recovers from insert race when a concurrent request creates the row first', async () => {
+    const periodStart = new Date('2026-09-01');
+    const periodEnd = new Date('2026-10-01');
+    pool.query
+      .mockResolvedValueOnce({ rows: [] }) // SELECT finds nothing
+      .mockResolvedValueOnce({ rows: [] }) // INSERT returns 0 (ON CONFLICT DO NOTHING, row already exists)
+      .mockResolvedValueOnce({
+        rows: [{ seconds_used: 0, period_start: periodStart, period_end: periodEnd }],
+      }); // Fallback SELECT returns the row created by concurrent request
+
+    const result = await getOrCreateAiNotesUsage('group-3');
+
+    expect(result).toEqual({ secondsUsed: 0, periodStart, periodEnd });
+    expect(pool.query).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe('addSecondsUsed', () => {
