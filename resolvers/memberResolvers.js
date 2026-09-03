@@ -52,7 +52,7 @@ const memberResolvers = {
         // page JavaScript (and anything that might run via XSS) can't read it, so there's
         // nothing for a browser client to store. See MEMBER_SECURITY_INTEGRATION.md.
         loginMember: async (_, { email, password }, context) => {
-            const { member, token } = await loginMember(email, password);
+            const { member, token } = await loginMember(email, password, context.req.ip);
             context.res.cookie(MEMBER_COOKIE_NAME, token, memberCookieOptions());
             return { member: mapMember(member) };
         },

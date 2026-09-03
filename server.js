@@ -39,6 +39,7 @@ import { createRequestSupabaseClient } from './utils/supabaseServerClient.js';
 import { startScheduler } from './utils/scheduler.js';
 
 const app = express();
+app.set('trust proxy', 1);
 const httpServer = http.createServer(app);
 
 const server = new ApolloServer({

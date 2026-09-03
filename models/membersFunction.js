@@ -4,8 +4,9 @@ import { checkRateLimit } from '../utils/rateLimit.js';
 //Add, Delete, Edit Profile, and Login functions for CRM members — scoped per group
 
 //Login function
-export const loginMember = async (email, password) => {
+export const loginMember = async (email, password, ip) => {
     checkRateLimit(`loginMember:${email.toLowerCase()}`);
+    checkRateLimit(`loginMember-ip:${ip}`, { max: 20, windowMs: 15 * 60 * 1000 });
 
     try {
         const query = 'SELECT uuid, username, email, password, group_id, token_version, avatar_base64 FROM members WHERE email = $1';
