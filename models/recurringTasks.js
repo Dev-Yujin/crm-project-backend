@@ -96,6 +96,12 @@ export const editRecurringTask = async (recurringTaskId, { clientId, clientName,
 
         const template = snapshot.val();
 
+        for (const [field, value] of Object.entries({ clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, recurrence, priority })) {
+            if (value === null) {
+                throw new Error(`${field} cannot be cleared — omit it to leave it unchanged, or provide a real value.`);
+            }
+        }
+
         if (assignedMembers !== undefined) {
             await validateMembersExist(assignedMembers, groupId);
         }
@@ -209,6 +215,10 @@ export const runDueRecurringTasks = async () => {
     for (const template of templates) {
         if (!template.active || template.nextRunAt > now) continue;
         if (await isGroupLocked(template.groupId)) continue;
+        if (!Object.values(RECURRENCE).includes(template.recurrence)) {
+            console.error(`Recurring task ${template.id} has an invalid recurrence (${template.recurrence}) — skipping this tick.`);
+            continue;
+        }
 
         try {
             const task = await addTask(
