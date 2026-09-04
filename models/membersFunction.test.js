@@ -17,11 +17,15 @@ vi.mock('./memberAssignments.js', () => ({
   countMemberAssignments: vi.fn(),
   reassignMemberAssignments: vi.fn(),
 }));
+vi.mock('./departments.js', () => ({
+  removeMemberFromAllDepartments: vi.fn(),
+}));
 
 const { pool } = await import('../config/supabase.js');
 const { comparePasswords } = await import('../utils/authUser.js');
 const { validateMembersExist } = await import('./task.js');
 const { countMemberAssignments, reassignMemberAssignments } = await import('./memberAssignments.js');
+const { removeMemberFromAllDepartments } = await import('./departments.js');
 const { loginMember, deleteMember } = await import('./membersFunction.js');
 
 describe('loginMember rate limiting', () => {
@@ -80,6 +84,7 @@ describe('deleteMember', () => {
     validateMembersExist.mockResolvedValue(undefined);
     countMemberAssignments.mockResolvedValue({ taskCount: 0, recurringTaskCount: 0 });
     reassignMemberAssignments.mockResolvedValue({ tasksTransferred: 0, recurringTasksTransferred: 0 });
+    removeMemberFromAllDepartments.mockResolvedValue(undefined);
     pool.query.mockResolvedValue({
       rows: [{ uuid: 'm1', username: 'old', email: 'old@x.com', group_id: 'g1', created_at: new Date() }],
     });
@@ -89,6 +94,11 @@ describe('deleteMember', () => {
     const result = await deleteMember('m1', 'g1');
     expect(result.uuid).toBe('m1');
     expect(reassignMemberAssignments).not.toHaveBeenCalled();
+    expect(removeMemberFromAllDepartments).toHaveBeenCalledWith('m1', 'g1');
+    // Must run before the Postgres DELETE so a failed sweep leaves the member intact.
+    expect(removeMemberFromAllDepartments.mock.invocationCallOrder[0]).toBeLessThan(
+      pool.query.mock.invocationCallOrder[0],
+    );
   });
 
   it('blocks the delete with MEMBER_HAS_ASSIGNMENTS when the member has assignments and no reassignTo', async () => {
@@ -109,13 +119,19 @@ describe('deleteMember', () => {
     expect(reassignMemberAssignments).toHaveBeenCalledWith('m1', 'm2', 'g1');
     expect(countMemberAssignments).not.toHaveBeenCalled();
     expect(result.uuid).toBe('m1');
+    expect(removeMemberFromAllDepartments).toHaveBeenCalledWith('m1', 'g1');
+    expect(removeMemberFromAllDepartments.mock.invocationCallOrder[0]).toBeLessThan(
+      pool.query.mock.invocationCallOrder[0],
+    );
   });
 
   it('rejects reassigning to the member being deleted', async () => {
-    await expect(deleteMember('m1', 'g1', 'm1')).rejects.toThrow(
-      'Cannot reassign to the member being deleted',
-    );
+    await expect(deleteMember('m1', 'g1', 'm1')).rejects.toMatchObject({
+      message: 'Cannot reassign to the member being deleted',
+      extensions: { code: 'BAD_USER_INPUT' },
+    });
     expect(reassignMemberAssignments).not.toHaveBeenCalled();
+    expect(removeMemberFromAllDepartments).not.toHaveBeenCalled();
     expect(pool.query).not.toHaveBeenCalled();
   });
 
@@ -124,6 +140,33 @@ describe('deleteMember', () => {
 
     await expect(deleteMember('m1', 'g1', 'm2')).rejects.toThrow('Member(s) not found: m2');
     expect(reassignMemberAssignments).not.toHaveBeenCalled();
+    expect(removeMemberFromAllDepartments).not.toHaveBeenCalled();
     expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  it('does not call removeMemberFromAllDepartments when blocked by MEMBER_HAS_ASSIGNMENTS', async () => {
+    countMemberAssignments.mockResolvedValue({ taskCount: 3, recurringTaskCount: 1 });
+
+    await expect(deleteMember('m1', 'g1')).rejects.toMatchObject({
+      extensions: { code: 'MEMBER_HAS_ASSIGNMENTS' },
+    });
+    expect(removeMemberFromAllDepartments).not.toHaveBeenCalled();
+  });
+
+  it('does not log console.error for the expected MEMBER_HAS_ASSIGNMENTS rejection, but does for a genuine failure', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    countMemberAssignments.mockResolvedValue({ taskCount: 1, recurringTaskCount: 0 });
+    await expect(deleteMember('m1', 'g1')).rejects.toMatchObject({
+      extensions: { code: 'MEMBER_HAS_ASSIGNMENTS' },
+    });
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+
+    countMemberAssignments.mockResolvedValue({ taskCount: 0, recurringTaskCount: 0 });
+    removeMemberFromAllDepartments.mockRejectedValue(new Error('firebase down'));
+    await expect(deleteMember('m1', 'g1')).rejects.toThrow('firebase down');
+    expect(consoleErrorSpy).toHaveBeenCalledWith('Error deleting member:', expect.any(Error));
+
+    consoleErrorSpy.mockRestore();
   });
 });

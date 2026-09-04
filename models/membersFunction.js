@@ -4,6 +4,7 @@ import { checkRateLimit } from '../utils/rateLimit.js';
 import { GraphQLError } from 'graphql';
 import { validateMembersExist } from './task.js';
 import { countMemberAssignments, reassignMemberAssignments } from './memberAssignments.js';
+import { removeMemberFromAllDepartments } from './departments.js';
 //Add, Delete, Edit Profile, and Login functions for CRM members — scoped per group
 
 //Login function
@@ -121,11 +122,14 @@ export const deleteMember = async (uuid, groupId, reassignTo = null) => {
     try {
         if (reassignTo != null) {
             if (reassignTo === uuid) {
-                throw new Error('Cannot reassign to the member being deleted');
+                throw new GraphQLError('Cannot reassign to the member being deleted', { extensions: { code: 'BAD_USER_INPUT' } });
             }
             await validateMembersExist([reassignTo], groupId);
             await reassignMemberAssignments(uuid, reassignTo, groupId);
         } else {
+            // Accepted TOCTOU window: an admin could add a new assignment to this member between
+            // this count-check (or the reassignment read above) and the DELETE below. Low-risk
+            // and not fixed here — this is a single-admin, low-frequency delete flow.
             const { taskCount, recurringTaskCount } = await countMemberAssignments(uuid, groupId);
             if (taskCount > 0 || recurringTaskCount > 0) {
                 throw new GraphQLError(
@@ -134,6 +138,11 @@ export const deleteMember = async (uuid, groupId, reassignTo = null) => {
                 );
             }
         }
+
+        // Sweep departments/* BEFORE the Postgres delete: if this fails, the delete aborts and
+        // the member is left intact (recoverable) rather than deleted with a dangling department
+        // reference (the bug this call exists to prevent).
+        await removeMemberFromAllDepartments(uuid, groupId);
 
         const query = 'DELETE FROM members WHERE uuid = $1 AND group_id = $2 RETURNING uuid, username, email, group_id, created_at';
         const result = await pool.query(query, [uuid, groupId]);
@@ -144,7 +153,9 @@ export const deleteMember = async (uuid, groupId, reassignTo = null) => {
 
         return result.rows[0];
     } catch (error) {
-        console.error('Error deleting member:', error);
+        if (error?.extensions?.code !== 'MEMBER_HAS_ASSIGNMENTS') {
+            console.error('Error deleting member:', error);
+        }
         throw error;
     }
 };

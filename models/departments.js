@@ -148,6 +148,21 @@ export const getAllDepartments = async (groupId) => {
     }
 };
 
+//Remove a deleted member from every department's membership list in the group — called by
+//deleteMember so a deletion never leaves stale username/email behind in departments/*.
+export const removeMemberFromAllDepartments = async (memberUuid, groupId) => {
+    const departments = await getAllDepartments(groupId);
+    const updates = {};
+    for (const department of departments) {
+        if (department.members.some((m) => m.uuid === memberUuid)) {
+            updates[`departments/${department.id}/members/${memberUuid}`] = null;
+        }
+    }
+    if (Object.keys(updates).length > 0) {
+        await db.ref().update(updates);
+    }
+};
+
 //No-op if departmentId is null, otherwise throws if it's not in the caller's group's departments catalog
 export const validateDepartmentExists = async (departmentId, groupId) => {
     if (departmentId == null) return;
