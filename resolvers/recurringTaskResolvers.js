@@ -1,6 +1,7 @@
 import {
     getAllRecurringTasks,
     addRecurringTask,
+    editRecurringTask,
     deleteRecurringTask,
     pauseRecurringTask,
     resumeRecurringTask,
@@ -39,6 +40,11 @@ const recurringTaskResolvers = {
             const user = requireUser(context);
             const groupId = requireGroup(context);
             const template = await addRecurringTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, user.id, recurrence, priority, groupId, assignedUsers, departmentId);
+            return mapRecurringTask(template);
+        },
+        editRecurringTask: async (_, { recurringTaskId, ...updates }, context) => {
+            const groupId = requireGroup(context);
+            const template = await editRecurringTask(recurringTaskId, updates, groupId);
             return mapRecurringTask(template);
         },
         deleteRecurringTask: async (_, { recurringTaskId }, context) => {

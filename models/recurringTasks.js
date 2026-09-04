@@ -80,6 +80,64 @@ const getAllRecurringTasksAcrossGroups = async () => {
     return data ? Object.entries(data).map(([id, template]) => ({ id, ...template })) : [];
 };
 
+//Edit a recurring task template in place — only the fields provided are changed; anything
+//omitted (undefined) keeps its stored value. Never touches nextRunAt/lastRunAt/active, so a
+//recurrence change takes effect starting from the run after the one already scheduled, not
+//immediately — the scheduler only reads `recurrence` fresh when it computes the *next*
+//nextRunAt after a run fires (see runDueRecurringTasks below). Must belong to the caller's group.
+export const editRecurringTask = async (recurringTaskId, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, recurrence, priority, assignedUsers, departmentId } = {}, groupId) => {
+    try {
+        const templateRef = db.ref(`recurringTasks/${recurringTaskId}`);
+        const snapshot = await templateRef.once("value");
+
+        if (!snapshot.exists() || snapshot.val().groupId !== groupId) {
+            throw new Error("Recurring task not found");
+        }
+
+        const template = snapshot.val();
+
+        if (assignedMembers !== undefined) {
+            await validateMembersExist(assignedMembers, groupId);
+        }
+
+        if (assignedUsers !== undefined) {
+            await validateUsersExist(assignedUsers, groupId);
+        }
+
+        if (clientId !== undefined || serviceId !== undefined) {
+            await validateServiceForClient(
+                clientId !== undefined ? clientId : template.clientId,
+                serviceId !== undefined ? serviceId : template.serviceId,
+                groupId
+            );
+        }
+
+        if (departmentId !== undefined) {
+            await validateDepartmentExists(departmentId, groupId);
+        }
+
+        const updates = {
+            ...(clientId !== undefined && { clientId }),
+            ...(clientName !== undefined && { clientName }),
+            ...(taskName !== undefined && { taskName }),
+            ...(taskDescription !== undefined && { taskDescription }),
+            ...(serviceId !== undefined && { serviceId }),
+            ...(assignedMembers !== undefined && { assignedMembers }),
+            ...(recurrence !== undefined && { recurrence }),
+            ...(priority !== undefined && { priority }),
+            ...(assignedUsers !== undefined && { assignedUsers: [...new Set(assignedUsers ?? [])] }),
+            ...(departmentId !== undefined && { departmentId }),
+        };
+
+        await templateRef.update(updates);
+
+        return { id: recurringTaskId, ...template, ...updates };
+    } catch (error) {
+        console.error("Error editing recurring task:", error);
+        throw error;
+    }
+};
+
 //Fetch all recurring task templates belonging to a group
 export const getAllRecurringTasks = async (groupId) => {
     try {
