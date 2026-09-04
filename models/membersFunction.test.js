@@ -10,9 +10,19 @@ vi.mock('../utils/authUser.js', () => ({
   verifyMemberToken: vi.fn(),
 }));
 
+vi.mock('./task.js', () => ({
+  validateMembersExist: vi.fn(async () => {}),
+}));
+vi.mock('./memberAssignments.js', () => ({
+  countMemberAssignments: vi.fn(),
+  reassignMemberAssignments: vi.fn(),
+}));
+
 const { pool } = await import('../config/supabase.js');
 const { comparePasswords } = await import('../utils/authUser.js');
-const { loginMember } = await import('./membersFunction.js');
+const { validateMembersExist } = await import('./task.js');
+const { countMemberAssignments, reassignMemberAssignments } = await import('./memberAssignments.js');
+const { loginMember, deleteMember } = await import('./membersFunction.js');
 
 describe('loginMember rate limiting', () => {
   beforeEach(() => {
@@ -61,5 +71,59 @@ describe('loginMember rate limiting', () => {
         loginMember(`rl-undefined-ip-test-${i}-${Math.random()}@example.com`, 'wrong', undefined),
       ).rejects.toThrow(/member not found/i);
     }
+  });
+});
+
+describe('deleteMember', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    validateMembersExist.mockResolvedValue(undefined);
+    countMemberAssignments.mockResolvedValue({ taskCount: 0, recurringTaskCount: 0 });
+    reassignMemberAssignments.mockResolvedValue({ tasksTransferred: 0, recurringTasksTransferred: 0 });
+    pool.query.mockResolvedValue({
+      rows: [{ uuid: 'm1', username: 'old', email: 'old@x.com', group_id: 'g1', created_at: new Date() }],
+    });
+  });
+
+  it('deletes normally when the member has no assignments', async () => {
+    const result = await deleteMember('m1', 'g1');
+    expect(result.uuid).toBe('m1');
+    expect(reassignMemberAssignments).not.toHaveBeenCalled();
+  });
+
+  it('blocks the delete with MEMBER_HAS_ASSIGNMENTS when the member has assignments and no reassignTo', async () => {
+    countMemberAssignments.mockResolvedValue({ taskCount: 3, recurringTaskCount: 1 });
+
+    await expect(deleteMember('m1', 'g1')).rejects.toMatchObject({
+      extensions: { code: 'MEMBER_HAS_ASSIGNMENTS', taskCount: 3, recurringTaskCount: 1 },
+    });
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  it('reassigns then deletes when a valid reassignTo is given', async () => {
+    reassignMemberAssignments.mockResolvedValue({ tasksTransferred: 3, recurringTasksTransferred: 1 });
+
+    const result = await deleteMember('m1', 'g1', 'm2');
+
+    expect(validateMembersExist).toHaveBeenCalledWith(['m2'], 'g1');
+    expect(reassignMemberAssignments).toHaveBeenCalledWith('m1', 'm2', 'g1');
+    expect(countMemberAssignments).not.toHaveBeenCalled();
+    expect(result.uuid).toBe('m1');
+  });
+
+  it('rejects reassigning to the member being deleted', async () => {
+    await expect(deleteMember('m1', 'g1', 'm1')).rejects.toThrow(
+      'Cannot reassign to the member being deleted',
+    );
+    expect(reassignMemberAssignments).not.toHaveBeenCalled();
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects a reassignTo that does not exist or belongs to another group', async () => {
+    validateMembersExist.mockRejectedValue(new Error('Member(s) not found: m2'));
+
+    await expect(deleteMember('m1', 'g1', 'm2')).rejects.toThrow('Member(s) not found: m2');
+    expect(reassignMemberAssignments).not.toHaveBeenCalled();
+    expect(pool.query).not.toHaveBeenCalled();
   });
 });

@@ -99,9 +99,9 @@ const memberResolvers = {
                 return { ...mapMember(member), inviteSent: false, inviteError: error.message };
             }
         },
-        deleteMember: async (_, { uuid }, context) => {
+        deleteMember: async (_, { uuid, reassignTo }, context) => {
             const groupId = requireGroup(context);
-            const member = await deleteMember(uuid, groupId);
+            const member = await deleteMember(uuid, groupId, reassignTo);
             return mapMember(member);
         },
         // Called by both actor types: a user (admin) editing a member they manage — uuid arg

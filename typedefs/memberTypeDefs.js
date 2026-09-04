@@ -23,7 +23,7 @@ const memberTypeDefs = `#graphql
 
   type Mutation {
     addMember(username: String!, email: String!, password: String!, sendInvite: Boolean): Member!
-    deleteMember(uuid: ID!): Member!
+    deleteMember(uuid: ID!, reassignTo: ID): Member!
     "For a user (admin): uuid is required, edits a member in the caller's own group. For a member: uuid is ignored, always edits the caller's own profile. avatarBase64: null explicitly removes the photo; omit it to leave the photo untouched."
     editMemberProfile(uuid: ID, username: String, email: String, password: String, avatarBase64: String): Member!
     loginMember(email: String!, password: String!): MemberAuthPayload!

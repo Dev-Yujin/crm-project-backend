@@ -1,6 +1,9 @@
 import { pool } from '../config/supabase.js';
 import { hashPassword, comparePasswords, generateMemberToken, verifyMemberToken } from '../utils/authUser.js';
 import { checkRateLimit } from '../utils/rateLimit.js';
+import { GraphQLError } from 'graphql';
+import { validateMembersExist } from './task.js';
+import { countMemberAssignments, reassignMemberAssignments } from './memberAssignments.js';
 //Add, Delete, Edit Profile, and Login functions for CRM members — scoped per group
 
 //Login function
@@ -110,9 +113,28 @@ export const addMember = async (username, email, password, groupId) => {
     }
 };
 
-//Delete member function (must belong to the caller's group)
-export const deleteMember = async (uuid, groupId) => {
+//Delete member function (must belong to the caller's group). If the member still has
+//task/recurring-task assignments, the caller must either supply reassignTo (an existing
+//member in the same group to transfer those assignments to first) or the delete is
+//refused — deleteMember never silently leaves a dangling assignedMembers reference behind.
+export const deleteMember = async (uuid, groupId, reassignTo = null) => {
     try {
+        if (reassignTo != null) {
+            if (reassignTo === uuid) {
+                throw new Error('Cannot reassign to the member being deleted');
+            }
+            await validateMembersExist([reassignTo], groupId);
+            await reassignMemberAssignments(uuid, reassignTo, groupId);
+        } else {
+            const { taskCount, recurringTaskCount } = await countMemberAssignments(uuid, groupId);
+            if (taskCount > 0 || recurringTaskCount > 0) {
+                throw new GraphQLError(
+                    `This member still has ${taskCount} task(s) and ${recurringTaskCount} recurring task(s) assigned. Provide reassignTo to transfer them first, or reassign manually.`,
+                    { extensions: { code: 'MEMBER_HAS_ASSIGNMENTS', taskCount, recurringTaskCount } }
+                );
+            }
+        }
+
         const query = 'DELETE FROM members WHERE uuid = $1 AND group_id = $2 RETURNING uuid, username, email, group_id, created_at';
         const result = await pool.query(query, [uuid, groupId]);
 
