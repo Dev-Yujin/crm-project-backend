@@ -6,6 +6,7 @@ import {
     clientInquiry,
 } from '../models/clients.js';
 import { requireGroup } from '../utils/requireUser.js';
+import { fromStoredCustomFields } from '../models/customFields.js';
 
 const mapClient = (row) => row && {
     id: row.id,
@@ -17,6 +18,7 @@ const mapClient = (row) => row && {
     servicesAvailed: row.servicesAvailed ?? null,
     groupId: row.groupId,
     createdAt: row.createdAt != null ? String(row.createdAt) : null,
+    customFields: fromStoredCustomFields(row.customFields),
 };
 
 const mapInquiry = (row) => row && {
@@ -35,9 +37,9 @@ const clientResolvers = {
         },
     },
     Mutation: {
-        addClient: async (_, { clientName, businessName, email, whatsappNumber, clientNotes, servicesAvailed }, context) => {
+        addClient: async (_, { clientName, businessName, email, whatsappNumber, clientNotes, servicesAvailed, customFields }, context) => {
             const groupId = requireGroup(context);
-            const client = await addClient(clientName, businessName, email, whatsappNumber, clientNotes, servicesAvailed, groupId);
+            const client = await addClient(clientName, businessName, email, whatsappNumber, clientNotes, servicesAvailed, groupId, customFields);
             return mapClient(client);
         },
         deleteClient: async (_, { clientId }, context) => {

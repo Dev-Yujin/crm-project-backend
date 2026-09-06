@@ -22,6 +22,7 @@ const recurringTaskTypeDefs = `#graphql
     nextRunAt: String
     departmentId: ID
     groupId: ID!
+    customFields: [CustomFieldValue!]!
   }
 
   type Query {
@@ -40,6 +41,7 @@ const recurringTaskTypeDefs = `#graphql
       priority: TaskPriority
       assignedUsers: [ID!]
       departmentId: ID
+      customFields: [CustomFieldValueInput!]
     ): RecurringTask!
     editRecurringTask(
       recurringTaskId: ID!
@@ -53,6 +55,7 @@ const recurringTaskTypeDefs = `#graphql
       priority: TaskPriority
       assignedUsers: [ID!]
       departmentId: ID
+      customFields: [CustomFieldValueInput!]
     ): RecurringTask!
     deleteRecurringTask(recurringTaskId: ID!): Boolean!
     pauseRecurringTask(recurringTaskId: ID!): RecurringTask!

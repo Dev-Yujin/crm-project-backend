@@ -9,6 +9,7 @@ const clientTypeDefs = `#graphql
     servicesAvailed: [ID!]
     groupId: ID!
     createdAt: String
+    customFields: [CustomFieldValue!]!
   }
 
   type Inquiry {
@@ -30,6 +31,7 @@ const clientTypeDefs = `#graphql
       whatsappNumber: String
       clientNotes: String
       servicesAvailed: [ID!]
+      customFields: [CustomFieldValueInput!]
     ): Client!
     deleteClient(clientId: ID!): Client!
     editClient(
@@ -40,6 +42,7 @@ const clientTypeDefs = `#graphql
       whatsappNumber: String
       clientNotes: String
       servicesAvailed: [ID!]
+      customFields: [CustomFieldValueInput!]
     ): Client!
     clientInquiry(clientName: String!, email: String!, message: String!): Inquiry!
   }

@@ -2,6 +2,7 @@ import { getDatabase, ServerValue } from "firebase-admin/database";
 import { app } from "../config/firebase.js";
 import { pool } from "../config/supabase.js";
 import { validateServicesExist } from "./services.js";
+import { CUSTOM_FIELD_ENTITY_TYPES, validateCustomFieldValues, toStoredCustomFields } from "./customFields.js";
 
 //Fetch all clients belonging to a group
 export const getAllClients = async (groupId) => {
@@ -17,9 +18,12 @@ export const getAllClients = async (groupId) => {
 };
 
 //Add a new client to a group
-export const addClient = async (clientName, businessName, email, whatsappNumber = null, clientNotes = null, servicesAvailed = null, groupId) => {
+export const addClient = async (clientName, businessName, email, whatsappNumber = null, clientNotes = null, servicesAvailed = null, groupId, customFields = null) => {
     try {
         await validateServicesExist(servicesAvailed, groupId);
+        await validateCustomFieldValues(customFields, CUSTOM_FIELD_ENTITY_TYPES.CLIENT, groupId);
+
+        const storedCustomFields = toStoredCustomFields(customFields) ?? {};
 
         const clientsRef = getDatabase(app).ref("clients");
         const newClientRef = clientsRef.push();
@@ -31,10 +35,11 @@ export const addClient = async (clientName, businessName, email, whatsappNumber 
             clientNotes,
             servicesAvailed,
             groupId,
+            customFields: storedCustomFields,
             createdAt: ServerValue.TIMESTAMP,
         });
 
-        return { id: newClientRef.key, clientName, businessName, email, whatsappNumber, clientNotes, servicesAvailed, groupId };
+        return { id: newClientRef.key, clientName, businessName, email, whatsappNumber, clientNotes, servicesAvailed, groupId, customFields: storedCustomFields };
     } catch (error) {
         console.error("Error adding client:", error);
         throw error;
@@ -60,7 +65,7 @@ export const deleteClient = async (clientId, groupId) => {
 };
 
 //Edit a client's details by their ID (must belong to the caller's group)
-export const editClient = async (clientId, { clientName, businessName, email, whatsappNumber, clientNotes, servicesAvailed } = {}, groupId) => {
+export const editClient = async (clientId, { clientName, businessName, email, whatsappNumber, clientNotes, servicesAvailed, customFields } = {}, groupId) => {
     try {
         const clientRef = getDatabase(app).ref(`clients/${clientId}`);
         const clientSnapshot = await clientRef.once("value");
@@ -73,6 +78,10 @@ export const editClient = async (clientId, { clientName, businessName, email, wh
             await validateServicesExist(servicesAvailed, groupId);
         }
 
+        if (customFields !== undefined) {
+            await validateCustomFieldValues(customFields, CUSTOM_FIELD_ENTITY_TYPES.CLIENT, groupId);
+        }
+
         const updatedData = {};
         if (clientName !== undefined) updatedData.clientName = clientName;
         if (businessName !== undefined) updatedData.businessName = businessName;
@@ -80,6 +89,7 @@ export const editClient = async (clientId, { clientName, businessName, email, wh
         if (whatsappNumber !== undefined) updatedData.whatsappNumber = whatsappNumber;
         if (clientNotes !== undefined) updatedData.clientNotes = clientNotes;
         if (servicesAvailed !== undefined) updatedData.servicesAvailed = servicesAvailed;
+        if (customFields !== undefined) updatedData.customFields = toStoredCustomFields(customFields);
         const finalData = { ...clientSnapshot.val(), ...updatedData };
         await clientRef.set(finalData);
         return { id: clientId, ...finalData };

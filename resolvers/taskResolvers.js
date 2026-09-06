@@ -16,6 +16,7 @@ import { getOrCreateBilling } from '../models/billing.js';
 import { getTaskForGroup, setTaskAttachment } from '../models/taskAttachments.js';
 import { randomUUID } from 'crypto';
 import { GraphQLError } from 'graphql';
+import { fromStoredCustomFields } from '../models/customFields.js';
 
 const mapSubmission = (submission) => submission && {
     link: submission.link,
@@ -69,6 +70,7 @@ const mapTask = (task) => task && {
     submission: mapSubmission(task.submission),
     revisions: (task.revisions ?? []).map(mapRevision),
     recurringTaskId: task.recurringTaskId ?? null,
+    customFields: fromStoredCustomFields(task.customFields),
 };
 
 const taskResolvers = {
@@ -124,10 +126,10 @@ const taskResolvers = {
         },
     },
     Mutation: {
-        addTask: async (_, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId, liveLink, source, assignedUsers, notes }, context) => {
+        addTask: async (_, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId, liveLink, source, assignedUsers, notes, customFields }, context) => {
             const user = requireUser(context);
             const groupId = requireGroup(context);
-            const task = await addTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, user.id, priority, null, statusId, departmentId, groupId, liveLink, source, assignedUsers, notes);
+            const task = await addTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, user.id, priority, null, statusId, departmentId, groupId, liveLink, source, assignedUsers, notes, customFields);
             return mapTask(task);
         },
         // Called by both actor types: a user editing any task in their group (clientId,

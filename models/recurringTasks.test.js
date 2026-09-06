@@ -5,6 +5,7 @@ vi.mock('../config/firebase.js', () => ({ app: {} }));
 const mockRef = {
   once: vi.fn(),
   update: vi.fn(async () => {}),
+  push: vi.fn(),
 };
 const mockDb = { ref: vi.fn(() => mockRef) };
 
@@ -30,12 +31,23 @@ vi.mock('./departments.js', () => ({
 vi.mock('./billing.js', () => ({
   isGroupLocked: vi.fn(async () => false),
 }));
+// Custom-field validation reads a different RTDB path (customFieldDefinitions) than the
+// recurringTasks/{id} path this file's tests configure mockRef.once for — mocked directly
+// rather than sharing the one mockRef across two paths.
+vi.mock('./customFields.js', async () => {
+  const actual = await vi.importActual('./customFields.js');
+  return {
+    ...actual,
+    validateCustomFieldValues: vi.fn(async () => {}),
+  };
+});
 
 const { validateMembersExist, validateServiceForClient, addTask } = await import('./task.js');
 const { validateUsersExist } = await import('./groups.js');
 const { validateDepartmentExists } = await import('./departments.js');
 const { isGroupLocked } = await import('./billing.js');
-const { editRecurringTask, runDueRecurringTasks, RECURRENCE } = await import('./recurringTasks.js');
+const { validateCustomFieldValues } = await import('./customFields.js');
+const { addRecurringTask, editRecurringTask, runDueRecurringTasks, RECURRENCE } = await import('./recurringTasks.js');
 
 const baseTemplate = {
   clientId: 'c1',
@@ -53,7 +65,41 @@ const baseTemplate = {
   nextRunAt: 2000,
   departmentId: 'd1',
   groupId: 'g1',
+  customFields: { f1: 'existing value' },
 };
+
+describe('addRecurringTask', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRef.push.mockReturnValue({ key: 'new-template', set: vi.fn(async () => {}) });
+    addTask.mockResolvedValue({});
+  });
+
+  it('stores provided custom field values on the template and carries them into the first generated instance', async () => {
+    await addRecurringTask(
+      'c1', 'Acme', 'Task name', 'desc', 's1', ['m1'], 'admin:1', RECURRENCE.DAILY, 'MEDIUM', 'g1', [], null,
+      [{ fieldId: 'f1', value: 'PO-1' }],
+    );
+
+    expect(validateCustomFieldValues).toHaveBeenCalledWith(
+      [{ fieldId: 'f1', value: 'PO-1' }],
+      'RECURRING_TASK',
+      'g1',
+    );
+    const templateRef = mockRef.push.mock.results[0].value;
+    expect(templateRef.set).toHaveBeenCalledWith(expect.objectContaining({ customFields: { f1: 'PO-1' } }));
+    expect(addTask).toHaveBeenCalledWith(
+      'c1', 'Acme', 'Task name', 'desc', 's1', ['m1'], null, 'admin:1', 'MEDIUM', 'new-template', null, null, 'g1',
+      null, null, [], null, [{ fieldId: 'f1', value: 'PO-1' }],
+    );
+  });
+
+  it('defaults to an empty customFields object when none are provided', async () => {
+    await addRecurringTask('c1', 'Acme', 'Task name', 'desc', 's1', ['m1'], 'admin:1', RECURRENCE.DAILY, 'MEDIUM', 'g1');
+    const templateRef = mockRef.push.mock.results[0].value;
+    expect(templateRef.set).toHaveBeenCalledWith(expect.objectContaining({ customFields: {} }));
+  });
+});
 
 describe('editRecurringTask', () => {
   beforeEach(() => {
@@ -150,6 +196,27 @@ describe('editRecurringTask', () => {
     await editRecurringTask('rt1', { clientId: 'c2', serviceId: 's2' }, 'g1');
     expect(validateServiceForClient).toHaveBeenCalledWith('c2', 's2', 'g1');
   });
+
+  it('leaves existing custom field values untouched when customFields is omitted', async () => {
+    await editRecurringTask('rt1', { taskName: 'New name' }, 'g1');
+    expect(validateCustomFieldValues).not.toHaveBeenCalled();
+    expect(mockRef.update).toHaveBeenCalledWith({ taskName: 'New name' });
+  });
+
+  it('overwrites custom field values when customFields is provided', async () => {
+    await editRecurringTask('rt1', { customFields: [{ fieldId: 'f1', value: 'new value' }] }, 'g1');
+    expect(validateCustomFieldValues).toHaveBeenCalledWith(
+      [{ fieldId: 'f1', value: 'new value' }],
+      'RECURRING_TASK',
+      'g1',
+    );
+    expect(mockRef.update).toHaveBeenCalledWith({ customFields: { f1: 'new value' } });
+  });
+
+  it('clears custom field values when customFields is explicitly null', async () => {
+    await editRecurringTask('rt1', { customFields: null }, 'g1');
+    expect(mockRef.update).toHaveBeenCalledWith({ customFields: null });
+  });
 });
 
 describe('runDueRecurringTasks', () => {
@@ -208,5 +275,46 @@ describe('runDueRecurringTasks', () => {
     expect(mockRef.update).toHaveBeenCalledWith(
       expect.objectContaining({ lastRunAt: expect.any(Number), nextRunAt: expect.any(Number) }),
     );
+  });
+
+  it('carries the template\'s custom field values over to the generated task instance', async () => {
+    mockRef.once.mockResolvedValue({
+      exists: () => true,
+      val: () => ({
+        rt1: {
+          ...baseTemplate,
+          id: 'rt1',
+          recurrence: RECURRENCE.DAILY,
+          nextRunAt: 1, // due
+          active: true,
+        },
+      }),
+    });
+
+    await runDueRecurringTasks();
+
+    const lastArg = addTask.mock.calls[0].at(-1);
+    expect(lastArg).toEqual([{ fieldId: 'f1', value: 'existing value' }]);
+  });
+
+  it('passes an empty array (not undefined) when the template has no custom field values', async () => {
+    mockRef.once.mockResolvedValue({
+      exists: () => true,
+      val: () => ({
+        rt1: {
+          ...baseTemplate,
+          id: 'rt1',
+          recurrence: RECURRENCE.DAILY,
+          nextRunAt: 1,
+          active: true,
+          customFields: undefined,
+        },
+      }),
+    });
+
+    await runDueRecurringTasks();
+
+    const lastArg = addTask.mock.calls[0].at(-1);
+    expect(lastArg).toEqual([]);
   });
 });

@@ -5,6 +5,7 @@ import { validateTaskStatusExists } from "./taskStatuses.js";
 import { validateDepartmentExists } from "./departments.js";
 import { fetchMemberGroupId } from "../utils/groups.js";
 import { validateUsersExist } from "./groups.js";
+import { CUSTOM_FIELD_ENTITY_TYPES, validateCustomFieldValues, toStoredCustomFields } from "./customFields.js";
 
 const db = getDatabase(app);
 
@@ -125,18 +126,20 @@ export const getTasksForMember = async (memberUuid) => {
 //Add a new task (created by a user, assigned to one or more members, tied to one of the client's availed services)
 //statusId is optional and freely chosen from the user-managed task status catalog — there is no fixed workflow
 //recurringTaskId is set internally when a recurring task template generates an instance — not exposed on the public addTask mutation
-export const addTask = async (clientId, clientName, taskName, taskDescription, serviceId, assignedMembers = [], dueDate = null, createdBy, priority = TASK_PRIORITY.MEDIUM, recurringTaskId = null, statusId = null, departmentId = null, groupId, liveLink = null, source = null, assignedUsers = [], notes = null) => {
+export const addTask = async (clientId, clientName, taskName, taskDescription, serviceId, assignedMembers = [], dueDate = null, createdBy, priority = TASK_PRIORITY.MEDIUM, recurringTaskId = null, statusId = null, departmentId = null, groupId, liveLink = null, source = null, assignedUsers = [], notes = null, customFields = null) => {
     try {
         await validateMembersExist(assignedMembers, groupId);
         await validateUsersExist(assignedUsers, groupId);
         await validateServiceForClient(clientId, serviceId, groupId);
         await validateTaskStatusExists(statusId, groupId);
         await validateDepartmentExists(departmentId, groupId);
+        await validateCustomFieldValues(customFields, CUSTOM_FIELD_ENTITY_TYPES.TASK, groupId);
 
         const normalizedLiveLink = liveLink != null ? normalizeLiveLink(liveLink) : null;
         const normalizedSource = source != null ? normalizeSource(source) : null;
         const normalizedNotes = notes != null ? normalizeNotes(notes) : null;
         const dedupedAssignedUsers = [...new Set(assignedUsers ?? [])];
+        const storedCustomFields = toStoredCustomFields(customFields) ?? {};
 
         const tasksRef = db.ref("tasks");
         const newTaskRef = tasksRef.push();
@@ -158,6 +161,7 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
             liveLink: normalizedLiveLink,
             source: normalizedSource,
             notes: normalizedNotes,
+            customFields: storedCustomFields,
             createdAt: ServerValue.TIMESTAMP,
         });
 
@@ -180,6 +184,7 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
             liveLink: normalizedLiveLink,
             source: normalizedSource,
             notes: normalizedNotes,
+            customFields: storedCustomFields,
             revisions: [],
         };
     } catch (error) {
@@ -209,7 +214,7 @@ export const deleteTask = async (taskId, groupId) => {
 //Edit a task's details, including freely setting its statusId — there is no fixed workflow gating this.
 //This is a member action (member bearer auth, not a user session) — callerGroupId comes from the
 //member's own verified token and must match the task's stored groupId, or the task is treated as not found.
-export const editTask = async (taskId, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId, liveLink, source, notes, assignedUsers } = {}, callerGroupId) => {
+export const editTask = async (taskId, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, dueDate, priority, statusId, departmentId, liveLink, source, notes, assignedUsers, customFields } = {}, callerGroupId) => {
     try {
         const taskRef = db.ref(`tasks/${taskId}`);
         const taskSnapshot = await taskRef.once("value");
@@ -245,6 +250,10 @@ export const editTask = async (taskId, { clientId, clientName, taskName, taskDes
             await validateDepartmentExists(departmentId, groupId);
         }
 
+        if (customFields !== undefined) {
+            await validateCustomFieldValues(customFields, CUSTOM_FIELD_ENTITY_TYPES.TASK, groupId);
+        }
+
         // Argument not provided (undefined) -> leave stored value untouched.
         // Argument provided as null or "" -> clear the field.
         const normalizedLiveLink = liveLink !== undefined ? (liveLink == null ? null : normalizeLiveLink(liveLink)) : undefined;
@@ -266,6 +275,7 @@ export const editTask = async (taskId, { clientId, clientName, taskName, taskDes
             ...(source !== undefined && { source: normalizedSource }),
             ...(notes !== undefined && { notes: normalizedNotes }),
             ...(assignedUsers !== undefined && { assignedUsers: [...new Set(assignedUsers ?? [])] }),
+            ...(customFields !== undefined && { customFields: toStoredCustomFields(customFields) }),
         };
 
         const finalData = { ...task, ...updatedTaskData };

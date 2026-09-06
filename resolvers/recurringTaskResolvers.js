@@ -7,6 +7,7 @@ import {
     resumeRecurringTask,
 } from '../models/recurringTasks.js';
 import { requireUser, requireGroup } from '../utils/requireUser.js';
+import { fromStoredCustomFields } from '../models/customFields.js';
 
 const mapRecurringTask = (template) => template && {
     id: template.id,
@@ -25,6 +26,7 @@ const mapRecurringTask = (template) => template && {
     nextRunAt: template.nextRunAt != null ? String(template.nextRunAt) : null,
     departmentId: template.departmentId ?? null,
     groupId: template.groupId,
+    customFields: fromStoredCustomFields(template.customFields),
 };
 
 const recurringTaskResolvers = {
@@ -36,10 +38,10 @@ const recurringTaskResolvers = {
         },
     },
     Mutation: {
-        addRecurringTask: async (_, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, recurrence, priority, assignedUsers, departmentId }, context) => {
+        addRecurringTask: async (_, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, recurrence, priority, assignedUsers, departmentId, customFields }, context) => {
             const user = requireUser(context);
             const groupId = requireGroup(context);
-            const template = await addRecurringTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, user.id, recurrence, priority, groupId, assignedUsers, departmentId);
+            const template = await addRecurringTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, user.id, recurrence, priority, groupId, assignedUsers, departmentId, customFields);
             return mapRecurringTask(template);
         },
         editRecurringTask: async (_, { recurringTaskId, ...updates }, context) => {

@@ -9,6 +9,7 @@ import {
 import { validateUsersExist } from "./groups.js";
 import { validateDepartmentExists } from "./departments.js";
 import { isGroupLocked } from "./billing.js";
+import { CUSTOM_FIELD_ENTITY_TYPES, validateCustomFieldValues, toStoredCustomFields, fromStoredCustomFields } from "./customFields.js";
 //Recurring task templates: on their schedule, the scheduler generates a fresh
 //one-off Task instance (via addTask) tagged with recurringTaskId
 
@@ -31,14 +32,16 @@ const computeNextRun = (from, recurrence) => {
 };
 
 //Create a recurring task template and immediately generate its first task instance
-export const addRecurringTask = async (clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, createdBy, recurrence, priority = TASK_PRIORITY.MEDIUM, groupId, assignedUsers = [], departmentId = null) => {
+export const addRecurringTask = async (clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, createdBy, recurrence, priority = TASK_PRIORITY.MEDIUM, groupId, assignedUsers = [], departmentId = null, customFields = null) => {
     try {
         await validateMembersExist(assignedMembers, groupId);
         await validateUsersExist(assignedUsers, groupId);
         await validateServiceForClient(clientId, serviceId, groupId);
         await validateDepartmentExists(departmentId, groupId);
+        await validateCustomFieldValues(customFields, CUSTOM_FIELD_ENTITY_TYPES.RECURRING_TASK, groupId);
 
         const dedupedAssignedUsers = [...new Set(assignedUsers ?? [])];
+        const storedCustomFields = toStoredCustomFields(customFields) ?? {};
 
         const recurringTasksRef = db.ref("recurringTasks");
         const newTemplateRef = recurringTasksRef.push();
@@ -60,11 +63,12 @@ export const addRecurringTask = async (clientId, clientName, taskName, taskDescr
             active: true,
             lastRunAt: now,
             nextRunAt: computeNextRun(now, recurrence),
+            customFields: storedCustomFields,
         };
 
         await newTemplateRef.set(template);
 
-        await addTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, null, createdBy, priority, newTemplateRef.key, null, departmentId, groupId, null, null, dedupedAssignedUsers);
+        await addTask(clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, null, createdBy, priority, newTemplateRef.key, null, departmentId, groupId, null, null, dedupedAssignedUsers, null, customFields);
 
         return { id: newTemplateRef.key, ...template };
     } catch (error) {
@@ -85,7 +89,7 @@ const getAllRecurringTasksAcrossGroups = async () => {
 //recurrence change takes effect starting from the run after the one already scheduled, not
 //immediately — the scheduler only reads `recurrence` fresh when it computes the *next*
 //nextRunAt after a run fires (see runDueRecurringTasks below). Must belong to the caller's group.
-export const editRecurringTask = async (recurringTaskId, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, recurrence, priority, assignedUsers, departmentId } = {}, groupId) => {
+export const editRecurringTask = async (recurringTaskId, { clientId, clientName, taskName, taskDescription, serviceId, assignedMembers, recurrence, priority, assignedUsers, departmentId, customFields } = {}, groupId) => {
     try {
         const templateRef = db.ref(`recurringTasks/${recurringTaskId}`);
         const snapshot = await templateRef.once("value");
@@ -122,6 +126,10 @@ export const editRecurringTask = async (recurringTaskId, { clientId, clientName,
             await validateDepartmentExists(departmentId, groupId);
         }
 
+        if (customFields !== undefined) {
+            await validateCustomFieldValues(customFields, CUSTOM_FIELD_ENTITY_TYPES.RECURRING_TASK, groupId);
+        }
+
         const updates = {
             ...(clientId !== undefined && { clientId }),
             ...(clientName !== undefined && { clientName }),
@@ -133,6 +141,7 @@ export const editRecurringTask = async (recurringTaskId, { clientId, clientName,
             ...(priority !== undefined && { priority }),
             ...(assignedUsers !== undefined && { assignedUsers: [...new Set(assignedUsers ?? [])] }),
             ...(departmentId !== undefined && { departmentId }),
+            ...(customFields !== undefined && { customFields: toStoredCustomFields(customFields) }),
         };
 
         await templateRef.update(updates);
@@ -237,7 +246,9 @@ export const runDueRecurringTasks = async () => {
                 template.groupId,
                 null,
                 null,
-                template.assignedUsers
+                template.assignedUsers,
+                null,
+                fromStoredCustomFields(template.customFields)
             );
             generated.push(task);
 

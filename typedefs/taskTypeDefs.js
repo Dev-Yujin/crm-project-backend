@@ -62,6 +62,7 @@ const taskTypeDefs = `#graphql
     submission: Submission
     revisions: [Revision!]!
     recurringTaskId: ID
+    customFields: [CustomFieldValue!]!
   }
 
   type Query {
@@ -88,6 +89,7 @@ const taskTypeDefs = `#graphql
       source: String
       notes: String
       assignedUsers: [ID!]
+      customFields: [CustomFieldValueInput!]
     ): Task!
     editTask(
       taskId: ID!
@@ -105,6 +107,7 @@ const taskTypeDefs = `#graphql
       source: String
       notes: String
       assignedUsers: [ID!]
+      customFields: [CustomFieldValueInput!]
     ): Task!
     deleteTask(taskId: ID!): Task!
     "For a user (admin): memberUuid is required — who the submission is on behalf of. For a member: memberUuid is ignored, always the caller."
