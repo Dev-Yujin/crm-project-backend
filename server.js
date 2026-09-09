@@ -23,8 +23,6 @@ import taskStatusTypeDefs from './typedefs/taskStatusTypeDefs.js';
 import taskStatusResolvers from './resolvers/taskStatusResolvers.js';
 import groupTypeDefs from './typedefs/groupTypeDefs.js';
 import groupResolvers from './resolvers/groupResolvers.js';
-import emailCredentialsTypeDefs from './typedefs/emailCredentialsTypeDefs.js';
-import emailCredentialsResolvers from './resolvers/emailCredentialsResolvers.js';
 import billingTypeDefs from './typedefs/billingTypeDefs.js';
 import billingResolvers from './resolvers/billingResolvers.js';
 import meetingRecordingTypeDefs from './typedefs/meetingRecordingTypeDefs.js';
@@ -46,8 +44,8 @@ app.set('trust proxy', 1);
 const httpServer = http.createServer(app);
 
 const server = new ApolloServer({
-  typeDefs: [userTypeDefs, memberTypeDefs, clientTypeDefs, taskTypeDefs, departmentTypeDefs, serviceTypeDefs, recurringTaskTypeDefs, taskStatusTypeDefs, groupTypeDefs, emailCredentialsTypeDefs, billingTypeDefs, meetingRecordingTypeDefs, customFieldTypeDefs],
-  resolvers: [userResolvers, memberResolvers, clientResolvers, taskResolvers, departmentResolvers, serviceResolvers, recurringTaskResolvers, taskStatusResolvers, groupResolvers, emailCredentialsResolvers, billingResolvers, meetingRecordingResolvers, customFieldResolvers],
+  typeDefs: [userTypeDefs, memberTypeDefs, clientTypeDefs, taskTypeDefs, departmentTypeDefs, serviceTypeDefs, recurringTaskTypeDefs, taskStatusTypeDefs, groupTypeDefs, billingTypeDefs, meetingRecordingTypeDefs, customFieldTypeDefs],
+  resolvers: [userResolvers, memberResolvers, clientResolvers, taskResolvers, departmentResolvers, serviceResolvers, recurringTaskResolvers, taskStatusResolvers, groupResolvers, billingResolvers, meetingRecordingResolvers, customFieldResolvers],
   plugins: [ApolloServerPluginDrainHttpServer({ httpServer }), billingLockPlugin],
 });
 

@@ -1,28 +1,28 @@
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
+import { buildMemberInviteEmail } from "./emailTemplates.js";
 
-//Sends a member invite email (portal link + login credentials) via the inviting user's own
-//Gmail account. `gmailAppPassword` must be a Gmail App Password, not the account's normal password
-//(Gmail's SMTP rejects normal passwords for third-party apps like this one).
-export const sendMemberInviteEmail = async ({ gmailUser, gmailAppPassword, toEmail, memberUsername, memberPassword }) => {
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+//Sends a member invite email (portal link + login credentials) from the CRM's shared
+//sender address via Resend — no per-user credentials needed.
+export const sendMemberInviteEmail = async ({ toEmail, memberUsername, memberPassword }) => {
     const portalUrl = process.env.MEMBER_PORTAL_URL;
-
-    const transporter = nodemailer.createTransport({
-        service: "gmail",
-        auth: { user: gmailUser, pass: gmailAppPassword },
+    const { subject, html, text } = buildMemberInviteEmail({
+        toEmail,
+        memberUsername,
+        memberPassword,
+        portalUrl,
     });
 
-    await transporter.sendMail({
-        from: gmailUser,
+    const { error } = await resend.emails.send({
+        from: process.env.RESEND_FROM_EMAIL,
         to: toEmail,
-        subject: "You've been added as a member",
-        text: `You've been added as a member.\n\nPortal: ${portalUrl}\nUsername: ${memberUsername}\nEmail: ${toEmail}\nPassword: ${memberPassword}\n\nPlease keep these credentials safe.`,
-        html: `
-            <p>You've been added as a member.</p>
-            <p><strong>Portal:</strong> <a href="${portalUrl}">${portalUrl}</a></p>
-            <p><strong>Username:</strong> ${memberUsername}<br/>
-            <strong>Email:</strong> ${toEmail}<br/>
-            <strong>Password:</strong> ${memberPassword}</p>
-            <p>Please keep these credentials safe.</p>
-        `,
+        subject,
+        text,
+        html,
     });
+
+    if (error) {
+        throw new Error(error.message ?? "Resend failed to send the invite email.");
+    }
 };
