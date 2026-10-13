@@ -29,6 +29,8 @@ import meetingRecordingTypeDefs from './typedefs/meetingRecordingTypeDefs.js';
 import meetingRecordingResolvers from './resolvers/meetingRecordingResolvers.js';
 import customFieldTypeDefs from './typedefs/customFieldTypeDefs.js';
 import customFieldResolvers from './resolvers/customFieldResolvers.js';
+import directMessageTypeDefs from './typedefs/directMessageTypeDefs.js';
+import directMessageResolvers from './resolvers/directMessageResolvers.js';
 import billingLockPlugin from './utils/billingLockPlugin.js';
 import rateLimiter from './config/rateLimiter.js';
 import { paddleWebhookHandler } from './routes/paddleWebhook.js';
@@ -44,8 +46,8 @@ app.set('trust proxy', 1);
 const httpServer = http.createServer(app);
 
 const server = new ApolloServer({
-  typeDefs: [userTypeDefs, memberTypeDefs, clientTypeDefs, taskTypeDefs, departmentTypeDefs, serviceTypeDefs, recurringTaskTypeDefs, taskStatusTypeDefs, groupTypeDefs, billingTypeDefs, meetingRecordingTypeDefs, customFieldTypeDefs],
-  resolvers: [userResolvers, memberResolvers, clientResolvers, taskResolvers, departmentResolvers, serviceResolvers, recurringTaskResolvers, taskStatusResolvers, groupResolvers, billingResolvers, meetingRecordingResolvers, customFieldResolvers],
+  typeDefs: [userTypeDefs, memberTypeDefs, clientTypeDefs, taskTypeDefs, departmentTypeDefs, serviceTypeDefs, recurringTaskTypeDefs, taskStatusTypeDefs, groupTypeDefs, billingTypeDefs, meetingRecordingTypeDefs, customFieldTypeDefs, directMessageTypeDefs],
+  resolvers: [userResolvers, memberResolvers, clientResolvers, taskResolvers, departmentResolvers, serviceResolvers, recurringTaskResolvers, taskStatusResolvers, groupResolvers, billingResolvers, meetingRecordingResolvers, customFieldResolvers, directMessageResolvers],
   plugins: [ApolloServerPluginDrainHttpServer({ httpServer }), billingLockPlugin],
 });
 
