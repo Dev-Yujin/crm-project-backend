@@ -46,6 +46,25 @@ export const validateServiceForClient = async (clientId, serviceId, groupId) => 
     }
 };
 
+//A task may name a client that isn't on the Clients page yet — clientId is "" and only the
+//typed clientName is stored. There is no client record to check availed services against,
+//so the service only has to exist in the caller's group.
+export const validateTaskClient = async (clientId, clientName, serviceId, groupId) => {
+    if (clientId) {
+        return validateServiceForClient(clientId, serviceId, groupId);
+    }
+
+    if (!clientName || !String(clientName).trim()) {
+        throw new Error("Client name is required");
+    }
+
+    const serviceSnapshot = await db.ref(`services/${serviceId}`).once("value");
+
+    if (!serviceSnapshot.exists() || serviceSnapshot.val().groupId !== groupId) {
+        throw new Error("Service not found");
+    }
+};
+
 export const mapRevisions = (revisions) =>
     revisions ? Object.entries(revisions).map(([id, revision]) => ({ id, ...revision })) : [];
 
@@ -130,7 +149,7 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
     try {
         await validateMembersExist(assignedMembers, groupId);
         await validateUsersExist(assignedUsers, groupId);
-        await validateServiceForClient(clientId, serviceId, groupId);
+        await validateTaskClient(clientId, clientName, serviceId, groupId);
         await validateTaskStatusExists(statusId, groupId);
         await validateDepartmentExists(departmentId, groupId);
         await validateCustomFieldValues(customFields, CUSTOM_FIELD_ENTITY_TYPES.TASK, groupId);
@@ -141,11 +160,14 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
         const dedupedAssignedUsers = [...new Set(assignedUsers ?? [])];
         const storedCustomFields = toStoredCustomFields(customFields) ?? {};
 
+        const storedClientId = clientId || "";
+        const storedClientName = String(clientName ?? "").trim();
+
         const tasksRef = db.ref("tasks");
         const newTaskRef = tasksRef.push();
         await newTaskRef.set({
-            clientId,
-            clientName,
+            clientId: storedClientId,
+            clientName: storedClientName,
             taskName,
             taskDescription,
             serviceId,
@@ -162,13 +184,16 @@ export const addTask = async (clientId, clientName, taskName, taskDescription, s
             source: normalizedSource,
             notes: normalizedNotes,
             customFields: storedCustomFields,
+            //When the live link was handed back — read by the frontend for the "link submitted" marker
+            liveLinkAt: normalizedLiveLink ? ServerValue.TIMESTAMP : null,
+            statusChangedAt: ServerValue.TIMESTAMP,
             createdAt: ServerValue.TIMESTAMP,
         });
 
         return {
             id: newTaskRef.key,
-            clientId,
-            clientName,
+            clientId: storedClientId,
+            clientName: storedClientName,
             taskName,
             taskDescription,
             serviceId,
@@ -234,9 +259,10 @@ export const editTask = async (taskId, { clientId, clientName, taskName, taskDes
             await validateUsersExist(assignedUsers, groupId);
         }
 
-        if (clientId !== undefined || serviceId !== undefined) {
-            await validateServiceForClient(
+        if (clientId !== undefined || serviceId !== undefined || clientName !== undefined) {
+            await validateTaskClient(
                 clientId !== undefined ? clientId : task.clientId,
+                clientName !== undefined ? clientName : task.clientName,
                 serviceId !== undefined ? serviceId : task.serviceId,
                 groupId
             );
@@ -260,9 +286,14 @@ export const editTask = async (taskId, { clientId, clientName, taskName, taskDes
         const normalizedSource = source !== undefined ? (source == null ? null : normalizeSource(source)) : undefined;
         const normalizedNotes = notes !== undefined ? (notes == null ? null : normalizeNotes(notes)) : undefined;
 
+        //Timestamps only move when the value actually changes, so re-saving a form doesn't
+        //reset "submitted on" / "completed on" dates
+        const liveLinkChanged = liveLink !== undefined && normalizedLiveLink !== (task.liveLink ?? null);
+        const statusChanged = statusId !== undefined && (statusId ?? null) !== (task.statusId ?? null);
+
         const updatedTaskData = {
-            ...(clientId !== undefined && { clientId }),
-            ...(clientName !== undefined && { clientName }),
+            ...(clientId !== undefined && { clientId: clientId || "" }),
+            ...(clientName !== undefined && { clientName: String(clientName ?? "").trim() }),
             ...(taskName !== undefined && { taskName }),
             ...(taskDescription !== undefined && { taskDescription }),
             ...(serviceId !== undefined && { serviceId }),
@@ -276,6 +307,8 @@ export const editTask = async (taskId, { clientId, clientName, taskName, taskDes
             ...(notes !== undefined && { notes: normalizedNotes }),
             ...(assignedUsers !== undefined && { assignedUsers: [...new Set(assignedUsers ?? [])] }),
             ...(customFields !== undefined && { customFields: toStoredCustomFields(customFields) }),
+            ...(liveLinkChanged && { liveLinkAt: normalizedLiveLink ? Date.now() : null }),
+            ...(statusChanged && { statusChangedAt: Date.now() }),
         };
 
         const finalData = { ...task, ...updatedTaskData };
