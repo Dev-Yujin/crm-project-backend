@@ -21,11 +21,18 @@ const taskTypeDefs = `#graphql
   }
 
   type TaskAttachment {
+    id: ID!
     filename: String!
     contentType: String!
     sizeBytes: Int!
     uploadedBy: ID!
     uploadedAt: String!
+  }
+
+  input TaskUploadFileInput {
+    filename: String!
+    contentType: String!
+    sizeBytes: Int!
   }
 
   type UploadTarget {
@@ -57,7 +64,10 @@ const taskTypeDefs = `#graphql
     liveLink: String
     source: String
     notes: String
+    "First attachment only — kept for older clients. Use attachments."
     attachment: TaskAttachment
+    "All attachments on the task (max 5), oldest first."
+    attachments: [TaskAttachment!]!
     createdAt: String
     submission: Submission
     revisions: [Revision!]!
@@ -69,7 +79,7 @@ const taskTypeDefs = `#graphql
     tasks: [Task!]!
     "Requires a member bearer token. memberUuid arg is accepted for backward compatibility but ignored — identity always comes from the token."
     tasksForMember(memberUuid: ID): [Task!]!
-    taskAttachmentUrl(taskId: ID!): String
+    taskAttachmentUrl(taskId: ID!, attachmentId: ID): String
     taskStorageBreakdown: StorageBreakdown!
   }
 
@@ -114,8 +124,10 @@ const taskTypeDefs = `#graphql
     submitTask(taskId: ID!, memberUuid: ID, link: String!, note: String): Task!
     reviewTask(taskId: ID!, comment: String!): Task!
     requestTaskUploadUrl(taskId: ID!, filename: String!, contentType: String!, sizeBytes: Int!): UploadTarget!
+    "Request presigned upload URLs for up to 5 files at once (counting files already on the task)."
+    requestTaskUploadUrls(taskId: ID!, files: [TaskUploadFileInput!]!): [UploadTarget!]!
     confirmTaskAttachment(taskId: ID!, key: String!, filename: String!, contentType: String!, sizeBytes: Int!): Task!
-    removeTaskAttachment(taskId: ID!): Task!
+    removeTaskAttachment(taskId: ID!, attachmentId: ID): Task!
   }
 `;
 

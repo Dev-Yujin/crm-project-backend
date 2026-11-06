@@ -47,3 +47,49 @@ export function validateAttachmentKey(key, groupId, taskId) {
     throw new Error('Invalid upload key for this task.');
   }
 }
+
+// A task holds at most this many attachments. Enforced in requestTaskUploadUrls
+// (before any bytes move) and again, authoritatively, inside the
+// confirmTaskAttachment transaction so parallel confirms can't overshoot it.
+export const MAX_ATTACHMENTS_PER_TASK = 5;
+
+// Id given to the pre-multi-attachment `task.attachment` field when it's read
+// through normalizeAttachments below. Tasks written before multi-file support
+// still have their one file there until it's migrated into `attachments`.
+export const LEGACY_ATTACHMENT_ID = 'legacy';
+
+export function checkAttachmentCount(existingCount, incomingCount) {
+  if (existingCount + incomingCount > MAX_ATTACHMENTS_PER_TASK) {
+    const remaining = Math.max(0, MAX_ATTACHMENTS_PER_TASK - existingCount);
+    throw new Error(
+      remaining === 0
+        ? `This task already has the maximum of ${MAX_ATTACHMENTS_PER_TASK} attachments. Remove one first.`
+        : `A task can have up to ${MAX_ATTACHMENTS_PER_TASK} attachments — you can add ${remaining} more.`,
+    );
+  }
+}
+
+// Firebase push-style ids only — attachmentId ends up in an RTDB path, so it
+// must never be able to contain '/', '.', '#', '$', '[' or ']'.
+export function validateAttachmentId(attachmentId) {
+  if (typeof attachmentId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(attachmentId)) {
+    throw new Error('Invalid attachment id.');
+  }
+}
+
+// Returns every attachment on a task as an array (oldest first), each with its
+// `id`. Reads the `attachments` map plus the legacy single `attachment` field.
+export function normalizeAttachments(task) {
+  const list = [];
+  const map = task?.attachments;
+  if (map && typeof map === 'object') {
+    for (const [id, value] of Object.entries(map)) {
+      if (value && typeof value === 'object' && value.key) list.push({ ...value, id });
+    }
+  }
+  const legacy = task?.attachment;
+  if (legacy && typeof legacy === 'object' && legacy.key && !list.some((a) => a.key === legacy.key)) {
+    list.push({ ...legacy, id: LEGACY_ATTACHMENT_ID });
+  }
+  return list.sort((a, b) => String(a.uploadedAt ?? '').localeCompare(String(b.uploadedAt ?? '')));
+}

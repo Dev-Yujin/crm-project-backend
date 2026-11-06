@@ -9,11 +9,19 @@ import {
     reviewTask,
 } from '../models/task.js';
 import { requireUser, requireGroup, requireMember, requireCallerGroupId } from '../utils/requireUser.js';
-import { validateContentType, validateFileSize, checkStorageQuota, validateAttachmentKey } from '../utils/attachments.js';
+import {
+    validateContentType,
+    validateFileSize,
+    checkStorageQuota,
+    validateAttachmentKey,
+    validateAttachmentId,
+    checkAttachmentCount,
+    normalizeAttachments,
+} from '../utils/attachments.js';
 import { createUploadUrl, createDownloadUrl, deleteR2Object, headR2ObjectSize } from '../config/r2.js';
 import { getOrCreateStorageUsage, adjustBytesUsed } from '../models/storage.js';
 import { getOrCreateBilling } from '../models/billing.js';
-import { getTaskForGroup, setTaskAttachment } from '../models/taskAttachments.js';
+import { getTaskForGroup, addTaskAttachment, removeTaskAttachmentById } from '../models/taskAttachments.js';
 import { randomUUID } from 'crypto';
 import { GraphQLError } from 'graphql';
 import { fromStoredCustomFields } from '../models/customFields.js';
@@ -40,6 +48,7 @@ const SPREADSHEET_TYPES = new Set([
 ]);
 
 const mapAttachment = (attachment) => attachment && {
+    id: attachment.id,
     filename: attachment.filename,
     contentType: attachment.contentType,
     sizeBytes: attachment.sizeBytes,
@@ -65,13 +74,51 @@ const mapTask = (task) => task && {
     liveLink: task.liveLink ?? null,
     source: task.source ?? null,
     notes: task.notes ?? null,
-    attachment: mapAttachment(task.attachment),
+    // `attachment` (first file) is kept for older clients; `attachments` is the full list.
+    attachments: normalizeAttachments(task).map(mapAttachment),
+    attachment: mapAttachment(normalizeAttachments(task)[0] ?? null),
     createdAt: task.createdAt != null ? String(task.createdAt) : null,
     submission: mapSubmission(task.submission),
     revisions: (task.revisions ?? []).map(mapRevision),
     recurringTaskId: task.recurringTaskId ?? null,
     customFields: fromStoredCustomFields(task.customFields),
 };
+
+// Shared by requestTaskUploadUrl and requestTaskUploadUrls.
+async function requestUploadTargets(taskId, files, context) {
+    const groupId = requireCallerGroupId(context);
+
+    if (!Array.isArray(files) || files.length === 0) {
+        throw new GraphQLError('Select at least one file to upload.', { extensions: { code: 'BAD_USER_INPUT' } });
+    }
+
+    const { task } = await getTaskForGroup(taskId, groupId);
+
+    try {
+        checkAttachmentCount(normalizeAttachments(task).length, files.length);
+    } catch (err) {
+        throw new GraphQLError(err.message, { extensions: { code: 'BAD_USER_INPUT' } });
+    }
+
+    for (const file of files) {
+        validateContentType(file.contentType);
+        validateFileSize(file.sizeBytes);
+    }
+
+    const totalBytes = files.reduce((sum, file) => sum + file.sizeBytes, 0);
+    const [bytesUsed, billing] = await Promise.all([
+        getOrCreateStorageUsage(groupId),
+        getOrCreateBilling(groupId),
+    ]);
+    checkStorageQuota(bytesUsed, totalBytes, billing.limits.storageGb);
+
+    return Promise.all(files.map(async ({ filename, contentType }) => {
+        const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const key = `${groupId}/${taskId}/${randomUUID()}-${safeFilename}`;
+        const uploadUrl = await createUploadUrl(key, contentType);
+        return { uploadUrl, key };
+    }));
+}
 
 const taskResolvers = {
     Query: {
@@ -88,15 +135,20 @@ const taskResolvers = {
             const tasks = await getTasksForMember(member.uuid);
             return tasks.map(mapTask);
         },
-        taskAttachmentUrl: async (_, { taskId }, context) => {
+        // attachmentId is optional for backward compatibility — omitted, it means the first file.
+        taskAttachmentUrl: async (_, { taskId, attachmentId }, context) => {
             const groupId = requireCallerGroupId(context);
             const { task } = await getTaskForGroup(taskId, groupId);
+            const attachments = normalizeAttachments(task);
+            const attachment = attachmentId
+                ? attachments.find((a) => a.id === attachmentId)
+                : attachments[0];
 
-            if (!task.attachment) {
+            if (!attachment) {
                 return null;
             }
 
-            return createDownloadUrl(task.attachment.key);
+            return createDownloadUrl(attachment.key);
         },
         taskStorageBreakdown: async (_, __, context) => {
             const groupId = requireCallerGroupId(context);
@@ -106,9 +158,7 @@ const taskResolvers = {
             let pdfBytes = 0;
             let spreadsheetsBytes = 0;
 
-            for (const task of tasks) {
-                const attachment = task.attachment;
-                if (!attachment) continue;
+            for (const attachment of tasks.flatMap(normalizeAttachments)) {
 
                 const sizeBytes = Number(attachment.sizeBytes);
                 if (!Number.isFinite(sizeBytes)) continue;
@@ -167,24 +217,14 @@ const taskResolvers = {
             return mapTask(task);
         },
         requestTaskUploadUrl: async (_, { taskId, filename, contentType, sizeBytes }, context) => {
-            const groupId = requireCallerGroupId(context);
-
-            await getTaskForGroup(taskId, groupId);
-
-            validateContentType(contentType);
-            validateFileSize(sizeBytes);
-
-            const [bytesUsed, billing] = await Promise.all([
-                getOrCreateStorageUsage(groupId),
-                getOrCreateBilling(groupId),
-            ]);
-            checkStorageQuota(bytesUsed, sizeBytes, billing.limits.storageGb);
-
-            const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-            const key = `${groupId}/${taskId}/${randomUUID()}-${safeFilename}`;
-            const uploadUrl = await createUploadUrl(key, contentType);
-
-            return { uploadUrl, key };
+            const [target] = await requestUploadTargets(taskId, [{ filename, contentType, sizeBytes }], context);
+            return target;
+        },
+        // Batch version for multi-file uploads: validates the whole selection up
+        // front (count limit + combined storage quota) and returns one presigned
+        // URL per file, in the same order as `files`.
+        requestTaskUploadUrls: async (_, { taskId, files }, context) => {
+            return requestUploadTargets(taskId, files, context);
         },
         confirmTaskAttachment: async (_, { taskId, key, filename, contentType, sizeBytes }, context) => {
             const groupId = requireCallerGroupId(context);
@@ -209,10 +249,6 @@ const taskResolvers = {
                 });
             }
 
-            const { task: existing } = await getTaskForGroup(taskId, groupId);
-            const previousSize = existing.attachment?.sizeBytes ?? 0;
-            const previousKey = existing.attachment?.key ?? null;
-
             const attachment = {
                 key,
                 filename,
@@ -222,22 +258,39 @@ const taskResolvers = {
                 uploadedAt: new Date().toISOString(),
             };
 
-            const updated = await setTaskAttachment(taskId, groupId, attachment);
-            await adjustBytesUsed(groupId, actualSizeBytes - previousSize);
-
-            if (previousKey && previousKey !== key) {
-                await deleteR2Object(previousKey);
+            let updated;
+            try {
+                updated = await addTaskAttachment(taskId, groupId, attachment);
+            } catch (err) {
+                if (err.code === 'ATTACHMENT_LIMIT') {
+                    // The bytes are already in R2 but will never be referenced — clean up.
+                    await deleteR2Object(key).catch(() => {});
+                    throw new GraphQLError(err.message, { extensions: { code: 'BAD_USER_INPUT' } });
+                }
+                throw err;
             }
+            await adjustBytesUsed(groupId, actualSizeBytes);
 
             return mapTask(updated);
         },
-        removeTaskAttachment: async (_, { taskId }, context) => {
+        // attachmentId is optional for backward compatibility — omitted, it removes the first file.
+        removeTaskAttachment: async (_, { taskId, attachmentId }, context) => {
             const groupId = requireCallerGroupId(context);
             const callerIdentity = context?.user ? `admin:${context.user.id}` : `member:${context.member.uuid}`;
             const isAdmin = !!context?.user;
 
             const { task: existing } = await getTaskForGroup(taskId, groupId);
-            const attachment = existing.attachment;
+            if (attachmentId) {
+                try {
+                    validateAttachmentId(attachmentId);
+                } catch (err) {
+                    throw new GraphQLError(err.message, { extensions: { code: 'BAD_USER_INPUT' } });
+                }
+            }
+            const attachments = normalizeAttachments(existing);
+            const attachment = attachmentId
+                ? attachments.find((a) => a.id === attachmentId)
+                : attachments[0];
 
             if (!attachment) {
                 return mapTask(existing);
@@ -249,7 +302,7 @@ const taskResolvers = {
                 });
             }
 
-            const updated = await setTaskAttachment(taskId, groupId, null);
+            const updated = await removeTaskAttachmentById(taskId, groupId, attachment.id);
             await adjustBytesUsed(groupId, -attachment.sizeBytes);
             await deleteR2Object(attachment.key);
 
