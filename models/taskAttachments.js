@@ -1,6 +1,7 @@
 import { getDatabase } from 'firebase-admin/database';
 import { app } from '../config/firebase.js';
 import { mapRevisions } from './task.js';
+import { MAX_ATTACHMENTS_PER_TASK, LEGACY_ATTACHMENT_ID } from '../utils/attachments.js';
 
 const db = getDatabase(app);
 
@@ -24,13 +25,45 @@ export async function getTaskForGroup(taskId, groupId) {
     return { ref: taskRef, task: { id: taskId, ...data, revisions: mapRevisions(data.revisions) } };
 }
 
-// Writes (or clears, if attachment is null) the attachment field on a task, returning
-// the full updated task object in the same shape models/task.js's functions return
-// (revisions already mapped to an array by getTaskForGroup above).
-export async function setTaskAttachment(taskId, groupId, attachment) {
+// Moves a pre-multi-attachment task's single `attachment` into the `attachments`
+// map under LEGACY_ATTACHMENT_ID. Idempotent — safe if two calls race.
+async function migrateLegacyAttachment(ref, task) {
+    if (task.attachment && task.attachment.key) {
+        await ref.update({ [`attachments/${LEGACY_ATTACHMENT_ID}`]: task.attachment, attachment: null });
+    }
+}
+
+// Appends one attachment to a task. The count limit is enforced inside an RTDB
+// transaction so several files confirmed in parallel can never push a task past
+// MAX_ATTACHMENTS_PER_TASK. Returns the updated task, or throws with
+// code 'ATTACHMENT_LIMIT' when the task is already full.
+export async function addTaskAttachment(taskId, groupId, attachment) {
     const { ref, task } = await getTaskForGroup(taskId, groupId);
-    const updated = { ...task, attachment };
-    delete updated.id;
-    await ref.update({ attachment });
-    return { id: taskId, ...updated };
+    await migrateLegacyAttachment(ref, task);
+
+    const attachmentId = ref.child('attachments').push().key;
+    const result = await ref.child('attachments').transaction((current) => {
+        const map = current ?? {};
+        if (Object.keys(map).length >= MAX_ATTACHMENTS_PER_TASK) return undefined; // abort
+        return { ...map, [attachmentId]: attachment };
+    });
+
+    if (!result.committed) {
+        const err = new Error(`This task already has the maximum of ${MAX_ATTACHMENTS_PER_TASK} attachments.`);
+        err.code = 'ATTACHMENT_LIMIT';
+        throw err;
+    }
+
+    return (await getTaskForGroup(taskId, groupId)).task;
+}
+
+// Removes one attachment by id (including the un-migrated legacy one) and
+// returns the updated task.
+export async function removeTaskAttachmentById(taskId, groupId, attachmentId) {
+    const { ref, task } = await getTaskForGroup(taskId, groupId);
+    if (attachmentId === LEGACY_ATTACHMENT_ID && task.attachment) {
+        await ref.update({ attachment: null });
+    }
+    await ref.child(`attachments/${attachmentId}`).remove();
+    return (await getTaskForGroup(taskId, groupId)).task;
 }
